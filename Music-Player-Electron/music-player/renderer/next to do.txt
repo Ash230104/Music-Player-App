@@ -1,0 +1,33 @@
+restructure the storage to store in drive, maybe, try to get rid of nodejs(castiel id)
+
+google login if possible
+
+deleted songs stay in "recently on loop", and "forgotten favs"
+
+player without any song still plays
+
+filter has options(mood, genre) which no song has
+
+slider is jittery in modals
+
+don't open add to another playlist when no other playlist exist
+
+close the song entry dropdown in 5secs when cursor leaves, and also close the tool dropdown when not hovering
+
+allow scroll in playlist icons
+
+intersection in filter
+
+miniplayer
+
+limit the minimum size of window
+
+show recommendations based on current play history on homepage
+
+color theme in settings
+
+private playlist fails silently
+
+thumbnails
+
+overall css

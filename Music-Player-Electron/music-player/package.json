@@ -1,0 +1,81 @@
+{
+  "name": "music-player",
+  "productName": "Music Player",
+  "version": "1.0.0",
+  "description": "Personal music player with playlists and YouTube import",
+  "main": "main.js",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": "Music Player",
+  "scripts": {
+    "postinstall": "node scripts/copy-vendor.js",
+    "vendor": "node scripts/copy-vendor.js",
+    "fetch-binaries": "node scripts/fetch-binaries.js",
+    "bundle-python": "node scripts/bundle-python.js",
+    "prestart": "node scripts/copy-vendor.js && node scripts/fetch-binaries.js --optional",
+    "start": "electron .",
+    "predist": "node scripts/copy-vendor.js && node scripts/fetch-binaries.js && node scripts/bundle-python.js",
+    "dist": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable",
+    "setup-analyzer": "node scripts/setup-analyzer.js"
+  },
+  "devDependencies": {
+    "@fontsource/poppins": "^5.0.0",
+    "@tensorflow/tfjs": "^4.22.0",
+    "@xenova/transformers": "^2.17.2",
+    "adm-zip": "^0.6.1",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.0",
+    "essentia.js": "^0.1.3",
+    "file-saver": "^2.0.5",
+    "jszip": "^3.10.1",
+    "sortablejs": "^1.15.2"
+  },
+  "build": {
+    "appId": "com.musicplayer.desktop",
+    "productName": "Music Player",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "asarUnpack": [
+      "spotify_scrape.py"
+    ],
+    "files": [
+      "main.js",
+      "server.js",
+      "downloader.js",
+      "binaries.js",
+      "package.json",
+      "build/icon.png",
+      "renderer/**/*",
+      "spotify_scrape.py"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "*.exe"
+        ]
+      },
+      {
+        "from": "python-embed",
+        "to": "python-embed"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "allowScripts": {
+    "sharp@0.32.6": true,
+    "electron-winstaller@5.4.0": true
+  }
+}

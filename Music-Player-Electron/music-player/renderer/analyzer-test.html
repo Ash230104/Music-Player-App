@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Analyzer self-test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--bg:#0b1020;--s1:#141c33;--s2:#1c2846;--ink:#f4f7ff;--mute:#9fb0d6;--accent:#3d8bff;--ok:#5be39a;--bad:#ff7b7b;--warn:#ffd479;--edge:#03060c}
+    *{box-sizing:border-box}
+    body{margin:0;padding:28px;background:var(--bg);color:var(--ink);font:14px/1.5 Poppins,"Segoe UI",sans-serif}
+    h1{margin:0 0 4px;font-size:24px} h2{margin:26px 0 8px;font-size:16px}
+    p.sub{margin:0 0 18px;color:var(--mute)}
+    a{color:var(--accent)}
+    .drop{border:2px dashed #34456f;border-radius:14px;padding:26px;text-align:center;background:var(--s1);cursor:pointer;display:block;margin-top:14px}
+    .drop.over{border-color:var(--accent);background:var(--s2)}
+    .drop input{display:none}
+    .card{background:var(--s1);border:2px solid var(--edge);border-radius:12px;box-shadow:4px 4px 0 var(--edge);padding:14px 16px;margin-top:14px}
+    table{border-collapse:collapse;width:100%} td,th{padding:4px 8px;text-align:left;border-bottom:1px solid #26345a;vertical-align:top}
+    th{color:var(--mute);font-weight:600}
+    .big{font-size:22px;font-weight:700}
+    .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .mute{color:var(--mute)}
+    .bar{height:8px;background:#26345a;border-radius:4px;min-width:120px;overflow:hidden}
+    .bar>i{display:block;height:100%;background:var(--accent)}
+    code,pre{font:12px Consolas,monospace;color:#cfe0ff}
+    pre{background:#0a1226;padding:10px;border-radius:8px;overflow:auto;max-height:280px;white-space:pre-wrap}
+    button{font:inherit;color:var(--ink);background:var(--s2);border:2px solid var(--edge);border-radius:10px;padding:6px 14px;cursor:pointer;box-shadow:3px 3px 0 var(--edge)}
+    button:disabled{opacity:.5;cursor:default}
+    .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <h1>Analyzer self-test</h1>
+  <p class="sub">Drop one or more songs to see exactly what the models predict, before any of it touches your library. <a href="/">Back to the player</a></p>
+
+  <div class="card" id="status"><span class="mute">Loading models…</span></div>
+
+  <div class="card row">
+    <label><input type="checkbox" id="do-language" checked /> also detect language (loads Whisper, ~45 MB, first run is slow)</label>
+    <button id="copy-csv" disabled>Copy results as CSV</button>
+    <span class="mute" id="csv-note"></span>
+  </div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="audio/*" multiple />
+    <strong>Click to choose songs</strong> or drop audio files here (several at once is fine)
+  </label>
+
+  <div id="out"></div>
+
+  <script src="/analyzer/analyzer-map.js"></script>
+  <script src="/analyzer/analyzer.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const pct = (v) => (v == null ? '-' : (v * 100).toFixed(0) + '%');
+    const num = (v, d = 2) => (typeof v === 'number' && isFinite(v) ? v.toFixed(d) : '-');
+    const bar = (v) => `<div class="bar"><i style="width:${Math.round((v || 0) * 100)}%"></i></div>`;
+    const csvRows = [];
+
+    SongAnalyzer.ready().then((info) => {
+      const failed = (info.failed || []).map((f) =>
+        `<div class="${f.required ? 'bad' : 'mute'}">${f.required ? '✗' : '–'} ${esc(f.name)}: ${esc(f.error)}${f.required ? '' : ' (optional)'}</div>`).join('');
+      $('status').innerHTML =
+        `<span class="ok">✓ Ready</span> · TensorFlow.js backend: <b>${esc(info.backend)}</b> · models loaded: <b>${info.loaded.length}</b>` +
+        `<div class="mute">${info.loaded.map(esc).join(', ')}</div>${failed}`;
+    }).catch((e) => {
+      $('status').innerHTML = `<div class="bad"><b>Could not start the analyzer</b></div><pre>${esc(e.message)}</pre>`;
+    });
+
+    function scoreRows(scores, chosen) {
+      return Object.keys(scores).map((k) =>
+        `<tr><td>${esc(k)}${k === chosen ? ' <span class="ok">✓</span>' : ''}</td><td>${pct(scores[k])}</td><td>${bar(scores[k])}</td></tr>`).join('');
+    }
+
+    function sourceRows(perSource) {
+      if (!perSource) return '';
+      return Object.keys(perSource).map((name) => {
+        const s = perSource[name];
+        const rel = Object.keys(s.rel).map((b) => `${esc(b)} ${pct(s.rel[b])}`).join(' · ');
+        return `<tr><td><code>${esc(name)}</code></td><td>strength ${pct(s.strength)}</td><td class="mute">${rel}</td></tr>`;
+      }).join('');
+    }
+
+    function languageCard(r) {
+      const l = r.details.language;
+      const raw = r.raw.language;
+      const windows = (raw && raw.windows || []).map((w, i) =>
+        `<tr><td>window ${i + 1}</td><td>${esc(w.code || '-')}</td><td>${pct(w.prob)}</td><td class="mute">${esc(w.method || '')} ${esc(w.error || '')}</td><td class="mute">${esc(w.text || '')}</td></tr>`).join('');
+      const err = r.raw.languageError ? `<div class="bad">language pass failed: <code>${esc(r.raw.languageError)}</code></div>` : '';
+      return `<div class="card"><h2 style="margin-top:0">Language</h2>${err}
+        <div>detected <b>${esc(l.code || '-')}</b> → app value <b>${esc(l.value || 'Unknown')}</b>
+        <span class="mute">${l.why ? '(' + esc(l.why) + ')' : ''} · agreement ${pct(l.agreement)} · instrumental tag ${pct(l.instrumental)}</span></div>
+        ${windows ? `<table><tr><th></th><th>code</th><th>conf.</th><th>how</th><th>transcript (first words)</th></tr>${windows}</table>` : ''}</div>`;
+    }
+
+    async function run(file) {
+      const t0 = performance.now();
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `<b>${esc(file.name)}</b> <span class="stage mute">working…</span>`;
+      $('out').prepend(card);
+      try {
+        const r = await SongAnalyzer.analyse(file, {
+          language: $('do-language').checked,
+          onProgress: (s) => { const el = card.querySelector('.stage'); if (el) el.textContent = s; }
+        });
+        const secs = ((performance.now() - t0) / 1000).toFixed(1);
+        const g = r.details.genre, m = r.details.mood, d = r.details;
+
+        const modelDump = Object.keys(r.raw.models).map((name) => {
+          const mm = r.raw.models[name];
+          const top = mm.classes.map((c, i) => [c, mm.mean[i]]).sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([c, v]) => `${esc(c)} ${pct(v)}`).join(' · ');
+          return `<tr><td><code>${esc(name)}</code></td><td>${mm.patches} patches</td><td class="mute">${top}</td></tr>`;
+        }).join('');
+        const errs = (r.raw.errors || []).map((e) => `<div class="warn">${esc(e.what)}: ${esc(e.error)}</div>`).join('');
+
+        card.innerHTML = `
+          <div class="big">${esc(file.name)}</div>
+          <div class="mute">analysed in ${secs}s · ${r.durationSec.toFixed(0)}s long · slice starts at ${r.excerptStartSec.toFixed(0)}s</div>${errs}
+          <table style="margin-top:10px">
+            <tr><th>Tempo</th><td class="big">${r.tempo ?? '-'}</td><td class="mute">${r.bpm ? num(r.bpm, 1) + ' BPM → ' + num(r.foldedBpm, 1) + ' folded · beat confidence ' + num(d.bpmConfidence) : 'no tempo found'} · loudness ${num(d.rmsDb, 1)} dB · danceability ${num(d.danceability)}</td></tr>
+            <tr><th>Genre</th><td class="big">${esc(r.genre ?? 'Unknown')}</td><td class="mute">best guess <b>${esc(g.best ?? '-')}</b> ${pct(g.score)} · margin ${pct(g.margin)} · evidence ${pct(g.evidence)}${g.why ? ' · ' + esc(g.why) : ''}${g.classicalDamped ? ' · classical damped' : ''}</td></tr>
+            <tr><th>Mood</th><td class="big">${esc(r.mood ?? 'Unknown')}</td><td class="mute">best guess <b>${esc(m.best ?? '-')}</b> ${pct(m.score)} · margin ${pct(m.margin)}${m.why ? ' · ' + esc(m.why) : ''} · key ${esc(d.key || '?')} ${esc(d.scale || '')} (${num(d.keyStrength)})</td></tr>
+            <tr><th>Language</th><td class="big">${esc(r.language ?? 'Unknown')}</td><td class="mute">${esc(r.details.language.code || '-')}${r.details.language.why ? ' · ' + esc(r.details.language.why) : ''}</td></tr>
+          </table>`;
+
+        const extra = document.createElement('div');
+        extra.innerHTML = `
+          <div class="card"><h2 style="margin-top:0">Genre scores</h2><table>${scoreRows(g.scores, g.value)}</table>
+            <h2>what each model said (winner-relative)</h2><table>${sourceRows(g.perSource)}</table></div>
+          <div class="card"><h2 style="margin-top:0">Mood scores</h2><table>${scoreRows(m.scores, m.value)}</table>
+            <h2>what each source said</h2><table>${sourceRows(m.perSource)}</table></div>
+          ${languageCard(r)}
+          <div class="card"><h2 style="margin-top:0">Raw model output (top classes)</h2><table>${modelDump}</table></div>`;
+        card.after(extra);
+
+        csvRows.push([file.name, r.genre || '', g.best || '', num(g.score), r.mood || '', m.best || '', num(m.score),
+          r.language || '', r.details.language.code || '', r.tempo || '', num(r.bpm, 1), num(d.rmsDb, 1),
+          d.key || '', d.scale || ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
+        $('copy-csv').disabled = false;
+        $('csv-note').textContent = csvRows.length + ' song(s) collected';
+      } catch (e) {
+        card.innerHTML = `<b>${esc(file.name)}</b><div class="bad">Analysis failed</div><pre>${esc(e.message)}</pre>`;
+      }
+    }
+
+    async function runAll(files) {
+      for (const f of files) await run(f);
+    }
+
+    $('copy-csv').addEventListener('click', async () => {
+      const header = 'file,genre,genre_best,genre_score,mood,mood_best,mood_score,language,lang_code,tempo,bpm,rms_db,key,scale';
+      const csv = [header].concat(csvRows).join('\n');
+      try { await navigator.clipboard.writeText(csv); $('csv-note').textContent = 'copied'; }
+      catch (_) { $('out').prepend(Object.assign(document.createElement('pre'), { textContent: csv })); }
+    });
+
+    const drop = $('drop'), input = $('file');
+    input.addEventListener('change', () => input.files.length && runAll([...input.files]));
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', (e) => { const f = [...e.dataTransfer.files]; if (f.length) runAll(f); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+node_modules/
+dist/
+bin/*.exe
+renderer/vendor/
+python-embed/

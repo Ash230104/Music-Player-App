@@ -1,0 +1,136 @@
+/* Cassette deck animation - see cassette.js.
+   Reel rotation and tape-pack size are driven from JS (they depend on audio progress);
+   everything below is CSS-only and keys off `body.is-playing`, which index.html already sets.
+
+   Accent / glow colours follow the app mood palette via CSS variables set on <html>:
+     --accent, --accent2, --sun-a, --sun-b, --sun-c, --glow, --s1, --s2, --bg, --ink, --edge
+*/
+
+/* ---- main deck ------------------------------------------------------------ */
+.cassette {
+  position: relative;            /* paint above .deck-art::before (the sun stripes) */
+  width: min(94cqw, calc(94cqh * 1.486));   /* 330 / 222 = 1.486 */
+  aspect-ratio: 330 / 222;
+}
+.cassette svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* PLAY key stays pressed while the tape runs (it sits behind the body edge, so it looks pushed in) */
+.cs-knob { transition: transform .14s ease-out; }
+body.is-playing .cassette .cs-k-play { transform: translateY(6px); }
+
+/* LOOP key stays pressed while repeat is on, same treatment as PLAY */
+body.is-repeat .cassette .cs-k-repeat { transform: translateY(6px); }
+
+/* NEXT / SHUFFLE / BACK keys dip down briefly when pressed, toggled from JS */
+.cassette .cs-k-next.cs-flash,
+.cassette .cs-k-shuffle.cs-flash,
+.cassette .cs-k-back.cs-flash { transform: translateY(6px); }
+
+/* power LED — colour follows the active mood accent */
+.cs-led {
+  transition: fill .25s ease, filter .25s ease;
+  fill: color-mix(in srgb, var(--s2, #3a4a70) 80%, var(--edge, #03060c));
+}
+body.is-playing .cassette .cs-led {
+  fill: var(--accent2, #8ec5ff);
+  filter: drop-shadow(0 0 4px var(--accent2, #8ec5ff));
+}
+
+/* tape sliding past the head: dashes travel left -> right, same direction as the tape */
+.cs-tape-run {
+  stroke-dasharray: 3 5;
+  animation: cs-tape .45s linear infinite;
+  animation-play-state: paused;
+}
+body.is-playing .cassette .cs-tape-run { animation-play-state: running; }
+@keyframes cs-tape { to { stroke-dashoffset: -8; } }
+
+/* cassette drops into the deck when a new song loads */
+.cs-drop { animation: cs-insert .45s cubic-bezier(.2, .8, .3, 1); }
+@keyframes cs-insert {
+  from { transform: translateY(-14px); opacity: .0; }
+  60%  { opacity: 1; }
+  to   { transform: none; opacity: 1; }
+}
+
+/* Label stripe + side-A badge track the mood accent */
+.cs-label-bar,
+.cs-side-badge {
+  fill: var(--accent, #3d8bff);
+  transition: fill .85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Glass wash over the window — soft mood tint */
+.cs-glass-tint {
+  fill: var(--accent2, #9cc8ff);
+  transition: fill .85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Dark shell of the inserted cassette + window recess */
+.cs-shell,
+.cs-window,
+.cs-well {
+  fill: color-mix(in srgb, var(--s1, #0d1730) 70%, #0a1120);
+  transition: fill .85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cs-screw {
+  fill: color-mix(in srgb, var(--s1, #0d1730) 85%, #000);
+  stroke: color-mix(in srgb, var(--mute, #6b7fae) 60%, #6b7fae);
+}
+
+.cs-port-dot {
+  fill: color-mix(in srgb, var(--mute, #6b7fae) 70%, #6b7fae);
+}
+
+/* ---- mini dock (hidden by default in this layout, kept consistent) --------- */
+.dock-cd {
+  width: 56px;
+  height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  animation: none;
+}
+.dock-cd svg { display: block; width: 100%; height: 100%; }
+
+.cs-mini-body {
+  fill: color-mix(in srgb, var(--accent2, #cbd6ee) 55%, #e8eef8);
+  transition: fill .85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.cs-mini-window {
+  fill: color-mix(in srgb, var(--s1, #1c2c4f) 75%, #0a1120);
+  transition: fill .85s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cs-mini-hub {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spin 1.7s linear infinite reverse;   /* counter-clockwise, like the big reels */
+  animation-play-state: paused;
+}
+body.is-playing .dock-cd .cs-mini-hub { animation-play-state: running; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cs-tape-run,
+  .cs-drop,
+  .cs-mini-hub {
+    animation: none !important;
+  }
+  .cs-label-bar,
+  .cs-side-badge,
+  .cs-glass-tint,
+  .cs-shell,
+  .cs-window,
+  .cs-well,
+  .cs-mini-body,
+  .cs-mini-window,
+  .cs-led {
+    transition: none !important;
+  }
+}
