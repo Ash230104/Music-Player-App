@@ -185,6 +185,40 @@ function explain(stderr) {
   return base;
 }
 
+/**
+ * Turn a failed link-read (before any song is downloaded) into a toast the
+ * person can act on: { title, message }. Covers private/missing playlists,
+ * private/removed videos, links that aren't music links at all, etc.
+ */
+function explainLink(stderr) {
+  const s = String(stderr || '');
+  if (/private playlist|playlist is private|playlist does not exist|playlist.*(not (available|viewable)|unavailable)|The playlist .* (does not exist|is private)/i.test(s)) {
+    return { title: 'Playlist unavailable', message: "This playlist is private or doesn't exist. Make it public or unlisted, then try again." };
+  }
+  if (/Private video|video is private/i.test(s)) {
+    return { title: 'Private video', message: "This video is private, so it can't be downloaded." };
+  }
+  if (/members-only|Join this channel|members only/i.test(s)) {
+    return { title: 'Members-only video', message: 'This video is only for channel members.' };
+  }
+  if (/confirm your age|age-restricted|inappropriate for some users/i.test(s)) {
+    return { title: 'Age-restricted video', message: 'YouTube needs a signed-in account to play this video.' };
+  }
+  if (/not available in your country|blocked .* in your country|geo.?restrict/i.test(s)) {
+    return { title: 'Not available here', message: "This video isn't available in your country." };
+  }
+  if (/Video unavailable|has been removed|no longer available|account .* terminated|been terminated|This video is not available/i.test(s)) {
+    return { title: 'Video unavailable', message: 'This video was removed or is no longer available.' };
+  }
+  if (/Unsupported URL|is not a valid URL|Unable to extract|No video formats found|no video could be found|HTTP Error 404/i.test(s)) {
+    return { title: "Can't use this link", message: "This doesn't look like a YouTube or Spotify song or playlist link." };
+  }
+  if (/getaddrinfo|Temporary failure|Network is unreachable|timed out|Connection (refused|reset|aborted)|Unable to download (webpage|API)|Failed to resolve/i.test(s)) {
+    return { title: "Can't reach the link", message: 'Check your internet connection and try again.' };
+  }
+  return { title: 'Download failed', message: explain(s) };
+}
+
 function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pacing = PACING }) {
   const queue = [];
   let running = false;
@@ -209,11 +243,11 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
       '--', url,
     ]);
     const text = r.stdout.trim();
-    if (!text) return { error: explain(r.stderr) };
+    if (!text) return { error: explain(r.stderr), stderr: r.stderr };
     try {
       return { info: JSON.parse(text) };
     } catch (_) {
-      return { error: explain(r.stderr) || 'Could not read the link.' };
+      return { error: explain(r.stderr) || 'Could not read the link.', stderr: r.stderr };
     }
   }
 
@@ -339,6 +373,11 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
         title: 'Downloader not set up',
         message: `Missing: ${missing.join(', ')}. Run "npm run fetch-binaries" and rebuild.`,
       });
+      return;
+    }
+
+    try { new URL(url); } catch (_) {
+      publish({ title: "Can't use this link", message: "That doesn't look like a valid link." });
       return;
     }
 
@@ -576,10 +615,13 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
 
     publishProgress({ state: 'resolving', url, jobTitle: null, isPlaylist: null, current: null, total: null, currentSong: null, restMs: null });
 
-    const { info, error } = await getInfo(url);
+    const { info, error, stderr } = await getInfo(url);
     if (cancelled()) return;
     if (!info) {
-      publish({ title: 'Download failed', url, message: error });
+      // No `url` on purpose: this is a link-level failure, so the page shows
+      // it as a toast rather than adding an "Unknown link" placeholder song.
+      const why = explainLink(stderr || error);
+      publish({ title: why.title, message: why.message });
       return;
     }
 
@@ -622,6 +664,13 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
     // ---- playlist ----------------------------------------------------------
     const title = info.title || info.playlist_title || 'YouTube Playlist';
     const entries = (info.entries || []).filter((e) => e && (e.id || (e.url && extractYoutubeId(e.url))));
+    if (!entries.length) {
+      publish({
+        title: 'No songs found',
+        message: 'Nothing to download at this link. The playlist may be private or empty, or it may not be a music link.',
+      });
+      return;
+    }
     let added = 0;
     let linked = 0;
     let skipped = 0;
@@ -772,4 +821,4 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
   };
 }
 
-module.exports = { createDownloader, explain };
+module.exports = { createDownloader, explain, explainLink };

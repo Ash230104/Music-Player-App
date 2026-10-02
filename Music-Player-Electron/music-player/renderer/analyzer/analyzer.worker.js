@@ -84,9 +84,10 @@ async function init(msg) {
   essentia = new Essentia(wasm);
   extractor = new EssentiaModel.EssentiaTFInputExtractor(wasm, 'musicnn', false);
 
+  // Load all models concurrently: the meta.json / model.json / shard fetches overlap, and only
+  // the GPU upload is effectively serial. Results are applied in the original order afterwards.
   var failed = [];
-  for (var i = 0; i < msg.models.length; i++) {
-    var def = msg.models[i];
+  var results = await Promise.all(msg.models.map(async function (def) {
     try {
       var metaRes = await fetch(modelBase + def.name + '/meta.json');
       if (!metaRes.ok) throw new Error('meta.json not found (' + metaRes.status + ')');
@@ -95,11 +96,15 @@ async function init(msg) {
       if (!classes.length) throw new Error('meta.json has no class list');
       var model = new EssentiaModel.TensorflowMusiCNN(tf, modelBase + def.name + '/model.json', false);
       await model.initialize();
-      loadedModels[def.name] = { model: model, classes: classes };
+      return { def: def, entry: { model: model, classes: classes } };
     } catch (e) {
-      failed.push({ name: def.name, error: errText(e), required: !!def.required });
+      return { def: def, error: errText(e) };
     }
-  }
+  }));
+  results.forEach(function (r) {
+    if (r.entry) loadedModels[r.def.name] = r.entry;
+    else failed.push({ name: r.def.name, error: r.error, required: !!r.def.required });
+  });
 
   initInfo = { backend: tf.getBackend(), loaded: Object.keys(loadedModels), failed: failed };
   post(Object.assign({ type: 'ready' }, initInfo));

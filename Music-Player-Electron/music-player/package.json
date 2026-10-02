@@ -1,12 +1,12 @@
 {
   "name": "music-player",
   "productName": "Music Player",
-  "version": "1.0.0",
-  "description": "Personal music player with playlists and YouTube import",
+  "version": "2.0.0",
+  "description": "Personal music player with YouTube, Spotify and Local import, and much more.",
   "main": "main.js",
   "private": true,
   "license": "UNLICENSED",
-  "author": "Music Player",
+  "author": "Ashhar",
   "scripts": {
     "postinstall": "node scripts/copy-vendor.js",
     "vendor": "node scripts/copy-vendor.js",
@@ -46,10 +46,12 @@
       "server.js",
       "downloader.js",
       "binaries.js",
+      "library-store.js",
       "package.json",
       "build/icon.png",
       "renderer/**/*",
-      "spotify_scrape.py"
+      "spotify_scrape.py",
+      "preload-mini.js"
     ],
     "extraResources": [
       {

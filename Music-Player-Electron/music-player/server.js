@@ -13,6 +13,7 @@
  *                                  downloaded songs can be linked, not redownloaded)
  *   POST /download-cancel       -> cancel the current download queue
  *   GET  /download-events       -> Server-Sent Events (finished songs, status)
+ *   GET  /cover-image?id=<ytId> -> that video's thumbnail (for song covers)
  *   GET  /downloads/<file>      -> finished mp3 (deleted shortly after it's served)
  *   POST /flush-import          -> list audio files in the import folder
  *   GET  /import-files/<file>   -> one file from the import folder
@@ -29,6 +30,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 
 const AUDIO_EXT = /\.(mp3|wav|m4a|flac|ogg)$/i;
 
@@ -56,7 +58,7 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
 };
 
-function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, onCancel = () => {}, log = () => {} }) {
+function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore = null, onDownload, onCancel = () => {}, log = () => {} }) {
   const clients = new Set(); // open SSE responses
   const pending = []; //        events published while no page was listening
 
@@ -85,14 +87,14 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
     return target === root || target.startsWith(root + path.sep) ? target : null;
   }
 
-  function sendFile(req, res, file, { onDone } = {}) {
+  function sendFile(req, res, file, { onDone, cache = 'no-cache' } = {}) {
     fs.stat(file, (err, st) => {
       if (err || !st.isFile()) return send(res, 404, 'Not found');
 
       const headers = {
         'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
         'Accept-Ranges': 'bytes',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': cache,
       };
 
       let start = 0;
@@ -155,6 +157,44 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
     });
   }
 
+  // Read raw binary body (for direct audio/cover uploads — no base64 overhead).
+  function readRaw(req, limit = 200 * 1024 * 1024) { // 200 MB ceiling
+    return new Promise((resolve, reject) => {
+      let size = 0;
+      const chunks = [];
+      req.on('data', (c) => {
+        size += c.length;
+        if (size > limit) { reject(new Error('Body too large')); req.destroy(); }
+        else chunks.push(c);
+      });
+      req.on('end', () => resolve(Buffer.concat(chunks)));
+      req.on('error', reject);
+    });
+  }
+
+  /**
+   * Fetch a song's cover (YouTube's 320x180 thumbnail) from the image CDN and
+   * hand it to the page. The page can't fetch it itself without tainting the
+   * canvas it uses to crop/resize it, so it asks us.
+   */
+  function fetchCover(id, res) {
+    const MAX = 2 * 1024 * 1024;
+    const up = https.get(`https://i.ytimg.com/vi/${id}/mqdefault.jpg`, { timeout: 10000 }, (r) => {
+      if (r.statusCode !== 200) { r.resume(); return send(res, 404, 'No cover'); }
+      const chunks = [];
+      let size = 0;
+      r.on('data', (c) => {
+        size += c.length;
+        if (size > MAX) return r.destroy();
+        chunks.push(c);
+      });
+      r.on('end', () => { if (!res.headersSent) send(res, 200, Buffer.concat(chunks), 'image/jpeg'); });
+      r.on('close', () => { if (!res.headersSent) send(res, 502, 'Cover fetch failed'); });
+    });
+    up.on('timeout', () => up.destroy());
+    up.on('error', () => { if (!res.headersSent) send(res, 502, 'Cover fetch failed'); });
+  }
+
   // ------------------------------------------------------------------ SSE --
   const sseFormat = (evt) => `data: ${JSON.stringify(evt)}\n\n`;
 
@@ -192,6 +232,12 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
     try {
       if (!allowedHosts.has(req.headers.host || '')) return send(res, 403, 'Forbidden');
 
+      // Cross-origin isolation: needed for SharedArrayBuffer, i.e. multi-threaded ONNX WASM
+      // (Whisper). setHeader() values are merged into every later writeHead(), so this covers
+      // pages, workers, static files, SSE and errors alike.
+      res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+      res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+
       const url = new URL(req.url, `http://${req.headers.host}`);
       const p = url.pathname;
 
@@ -200,6 +246,12 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
         if (p === '/') return sendFile(req, res, path.join(rendererDir, 'homepage.html'));
         if (p === '/playlist') return sendFile(req, res, path.join(rendererDir, 'homepage.html'));
         if (p === '/download-events') return handleSse(req, res);
+
+        if (p === '/cover-image') {
+          const id = url.searchParams.get('id') || '';
+          if (!/^[\w-]{6,20}$/.test(id)) return send(res, 400, 'Bad id');
+          return fetchCover(id, res);
+        }
 
         if (p.startsWith('/downloads/')) {
           const name = safeJoin(downloadsDir, path.basename(decodeURIComponent(p.slice('/downloads/'.length))));
@@ -216,10 +268,38 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
           return sendFile(req, res, name);
         }
 
+        if (p === '/library-audio') {
+          if (!libraryStore) return send(res, 503, 'Store not configured');
+          const songId = url.searchParams.get('id');
+          if (!songId) return send(res, 400, 'Missing ?id=');
+          const file = libraryStore.audioPath(songId);
+          if (!file) return send(res, 404, 'Not found');
+          return sendFile(req, res, file, { headers: { 'Content-Type': 'audio/mpeg' } });
+        }
+
+        if (p === '/library-cover') {
+          if (!libraryStore) return send(res, 503, 'Store not configured');
+          const songId = url.searchParams.get('id');
+          if (!songId) return send(res, 400, 'Missing ?id=');
+          const file = libraryStore.coverPath(songId);
+          if (!file) return send(res, 404, 'Not found');
+          return sendFile(req, res, file, { headers: { 'Content-Type': 'image/jpeg' } });
+        }
+
+        if (p === '/library-snapshot') {
+          if (!libraryStore) return sendJson(res, 503, { exists: false });
+          const snap = libraryStore.loadSnapshot();
+          if (!snap) return sendJson(res, 200, { exists: false });
+          return sendJson(res, 200, { exists: true, snapshot: snap });
+        }
+
         // Static files from renderer/ (vendor scripts, fonts, ...). No dotfiles.
         const file = safeJoin(rendererDir, p.slice(1));
         if (!file || path.basename(file).startsWith('.')) return send(res, 404, 'Not found');
-        return sendFile(req, res, file);
+        // Model shards and vendored libs never change while the app runs: cache them hard so a
+        // worker restart doesn't revalidate dozens of files. Our own scripts/pages stay no-cache.
+        const heavy = p.startsWith('/models/') || p.startsWith('/vendor/');
+        return sendFile(req, res, file, heavy ? { cache: 'public, max-age=31536000, immutable' } : {});
       }
 
       // ---- POST ----
@@ -260,6 +340,46 @@ function createServer({ port, rendererDir, downloadsDir, importDir, onDownload, 
           const name = safeJoin(importDir, path.basename(String(body.filename || '')));
           if (name && name !== path.resolve(importDir)) fs.rmSync(name, { force: true });
           return sendJson(res, 200, { status: 'deleted' });
+        }
+
+        if (p === '/library-sync') {
+          if (!libraryStore) return sendJson(res, 503, { error: 'Store not configured' });
+          const body = await readJson(req, 5 * 1024 * 1024); // 5 MB
+          try {
+            libraryStore.saveSnapshot(body);
+            return sendJson(res, 200, { status: 'saved' });
+          } catch (err) {
+            log('library-sync error:', err.message);
+            return sendJson(res, 500, { error: err.message });
+          }
+        }
+
+        if (p === '/library-save-audio') {
+          if (!libraryStore) return sendJson(res, 503, { error: 'Store not configured' });
+          const songId = new URL(req.url, `http://127.0.0.1`).searchParams.get('id');
+          if (!songId) return sendJson(res, 400, { error: 'Missing ?id=' });
+          try {
+            const buf = await readRaw(req); // raw binary, no base64 overhead
+            libraryStore.saveAudio(songId, buf);
+            return sendJson(res, 200, { status: 'saved' });
+          } catch (err) {
+            log('library-save-audio error:', err.message);
+            return sendJson(res, 500, { error: err.message });
+          }
+        }
+
+        if (p === '/library-save-cover') {
+          if (!libraryStore) return sendJson(res, 503, { error: 'Store not configured' });
+          const songId = new URL(req.url, `http://127.0.0.1`).searchParams.get('id');
+          if (!songId) return sendJson(res, 400, { error: 'Missing ?id=' });
+          try {
+            const buf = await readRaw(req, 10 * 1024 * 1024); // 10 MB ceiling for covers
+            libraryStore.saveCover(songId, buf);
+            return sendJson(res, 200, { status: 'saved' });
+          } catch (err) {
+            log('library-save-cover error:', err.message);
+            return sendJson(res, 500, { error: err.message });
+          }
         }
       }
 

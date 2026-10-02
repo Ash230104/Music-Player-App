@@ -186,18 +186,65 @@
     });
   }
 
+  // ---- language pass (Whisper) --------------------------------------------------------------
+  // Protocol matches language.worker.js:
+  //   in:  { type: 'detect', id, windows: [Float32Array(16kHz mono, <=30s)], earlyStop }
+  //   out: { type: 'result', id, windows: [{ code, prob, text, method }] }
+  // Throws on failure; the caller decides whether that matters.
+  async function runLanguage(audio, dur, progress) {
+    var ready = ensureLangWorker();          // start loading the model while we build the slices
+    ready.catch(function () {});             // (a later `await ready` still sees the rejection)
+
+    // Spread LANG_WINDOWS non-overlapping 30 s slices across the track.
+    var winSec = LANG_WINDOW_SEC;
+    var usable = Math.max(0, dur - winSec);
+    var starts = [];
+    if (usable <= 0) {
+      starts = [0];
+    } else if (LANG_WINDOWS === 1) {
+      starts = [usable * 0.3];
+    } else {
+      for (var wi = 0; wi < LANG_WINDOWS; wi++) starts.push((usable * wi) / (LANG_WINDOWS - 1));
+    }
+
+    var slices = [], transfer = [];
+    for (var i = 0; i < starts.length; i++) {
+      var slice16 = await resample(monoExcerpt(audio, starts[i], winSec), 44100, 16000);
+      // Cap at exactly 30 s of 16 kHz in case resampling overshoots.
+      if (slice16.length > winSec * 16000) slice16 = slice16.slice(0, winSec * 16000);
+      slices.push(slice16);
+      transfer.push(slice16.buffer);
+    }
+
+    await ready;
+    var lr = await ask(langWorker, langPending,
+      { type: 'detect', windows: slices, earlyStop: true }, transfer, progress);
+    touchLangIdle();
+
+    return (lr.windows || []).map(function (w) {
+      return {
+        code: (w && w.code) || null,
+        prob: (w && typeof w.prob === 'number') ? w.prob : null,
+        method: (w && w.method) || 'whisper',
+        text: (w && w.text) || '',
+        error: (w && w.error) || null
+      };
+    });
+  }
+
   // ---- one song ---------------------------------------------------------------------------
   function runOne(blob, opts) {
     opts = opts || {};
     var progress = opts.onProgress || function () {};
     var wantLanguage = opts.language !== false;
+    // Songs that already have a language don't need Whisper at all (buildPatch only fills blanks).
+    if (wantLanguage && opts.song && !AnalyzerMap.unknownFields(opts.song).language) wantLanguage = false;
 
     return (async function () {
+      // Model/WASM startup and audio decoding are independent, so run them together.
       progress('loading');
-      await ensureWorker();
-
-      progress('decoding');
-      var audio = await decode(blob);
+      var parts = await Promise.all([ensureWorker(), decode(blob)]);
+      var audio = parts[1];
       var dur = audio.duration;
       if (!(dur > 3)) throw new Error('Audio is too short to analyse.');
 
@@ -205,15 +252,25 @@
       var audio44k = monoExcerpt(audio, start, EXCERPT_SEC);
       var audio16k = (await resample(audio44k, 44100, 16000)).slice(0, MODEL_SEC * 16000);
 
-      var res = await ask(worker, pending,
+      // Essentia/TF.js (WebGL) and Whisper (WASM CPU) use different hardware in different
+      // workers, so send the Essentia job first and run the language pass alongside it.
+      var essPromise = ask(worker, pending,
         { type: 'analyse', audio16k: audio16k, audio44k: audio44k },
         [audio16k.buffer, audio44k.buffer], progress);
+
+      var langPromise = null;
+      if (wantLanguage) {
+        progress('language');
+        // Never rejects, so it can't become an unhandled rejection if Essentia fails first.
+        langPromise = runLanguage(audio, dur, progress).then(
+          function (windows) { return { windows: windows }; },
+          function (err) { return { error: (err && err.message) || String(err) }; }
+        );
+      }
+
+      var res = await essPromise;
       var raw = res.raw;
 
-      // ---- language pass (Whisper via language.worker.js) -------------------------------
-      // Protocol matches language.worker.js:
-      //   in:  { type: 'detect', id, windows: [Float32Array(16kHz mono, <=30s)] }
-      //   out: { type: 'result', id, windows: [{ code, prob, text, method }] }
       var ms = raw.models && raw.models['msd-musicnn'];
       var instrumental = null;
       if (ms && ms.classes) {
@@ -222,63 +279,16 @@
       }
       raw.language = { windows: [], instrumental: instrumental };
 
-      if (wantLanguage) {
+      if (langPromise) {
         var ceil = (AnalyzerMap.CONFIG && AnalyzerMap.CONFIG.language &&
           AnalyzerMap.CONFIG.language.instrumentalCeiling) || 0.99;
         if (instrumental != null && instrumental > ceil) {
-          // Confidently instrumental — skip Whisper; mapLanguage will report why.
+          // Confidently instrumental: discard the Whisper result (it keeps running in the
+          // background, harmlessly); mapLanguage will report why there's no language.
         } else {
-          try {
-            progress('language');
-            await ensureLangWorker();
-
-            // Spread LANG_WINDOWS non-overlapping 30 s slices across the track.
-            var winSec = LANG_WINDOW_SEC;
-            var nWin = LANG_WINDOWS;
-            var usable = Math.max(0, dur - winSec);
-            var starts = [];
-            if (usable <= 0) {
-              starts = [0];
-            } else if (nWin === 1) {
-              starts = [usable * 0.3];
-            } else {
-              for (var wi = 0; wi < nWin; wi++) {
-                starts.push((usable * wi) / (nWin - 1));
-              }
-            }
-
-            var slices = [];
-            var transfer = [];
-            for (var wi2 = 0; wi2 < starts.length; wi2++) {
-              var slice44 = monoExcerpt(audio, starts[wi2], winSec);
-              var slice16 = await resample(slice44, 44100, 16000);
-              // Cap at exactly 30 s of 16 kHz in case resampling overshoots.
-              if (slice16.length > winSec * 16000) {
-                slice16 = slice16.slice(0, winSec * 16000);
-              }
-              slices.push(slice16);
-              transfer.push(slice16.buffer);
-            }
-
-            var lr = await ask(langWorker, langPending, {
-              type: 'detect',
-              windows: slices
-            }, transfer, progress);
-
-            raw.language.windows = (lr.windows || []).map(function (w) {
-              return {
-                code: (w && w.code) || null,
-                prob: (w && typeof w.prob === 'number') ? w.prob : null,
-                method: (w && w.method) || 'whisper',
-                text: (w && w.text) || '',
-                error: (w && w.error) || null
-              };
-            });
-            touchLangIdle();
-          } catch (langErr) {
-            // Language failure must not fail the whole analysis.
-            raw.languageError = (langErr && langErr.message) || String(langErr);
-          }
+          var lang = await langPromise;
+          if (lang.error) raw.languageError = lang.error;   // must not fail the whole analysis
+          else raw.language.windows = lang.windows;
         }
       }
 
@@ -316,6 +326,7 @@
         try {
           var result = await analyse(it.blob, {
             language: opts.language,
+            song: it.song,
             onProgress: function (stage) {
               if (opts.onProgress) opts.onProgress({ done: done, total: items.length, name: name, stage: stage });
             }

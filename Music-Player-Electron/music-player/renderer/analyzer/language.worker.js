@@ -70,7 +70,11 @@ async function init(msg) {
   env.allowLocalModels = true;
   env.localModelPath = msg.modelBase || '/models/transformers/';
   env.backends.onnx.wasm.wasmPaths = libBase;
-  env.backends.onnx.wasm.numThreads = 1;
+  // Multi-threaded WASM needs SharedArrayBuffer, i.e. cross-origin isolation (server.js sends
+  // COOP/COEP). Without it, stay single-threaded instead of failing.
+  env.backends.onnx.wasm.numThreads = self.crossOriginIsolated
+    ? Math.max(1, Math.min(4, (self.navigator && self.navigator.hardwareConcurrency) || 1))
+    : 1;
 
   processor = await AutoProcessor.from_pretrained(MODEL_ID);
   tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);
@@ -188,37 +192,44 @@ async function extractFeatures(audio) {
   throw new Error('processor did not return input_features');
 }
 
-async function generateTokens(input_features) {
+// The language token is the first token Whisper emits after <|startoftranscript|>, so a handful
+// of new tokens is enough to read it. The long budget is only used when that fails and we need
+// a transcript snippet for the script-based fallback.
+const FAST_TOKENS = 4;
+const FULL_TOKENS = 64;
+
+async function generateTokens(input_features, maxTokens) {
   // Multilingual Whisper: do not force a language; let it emit <|LANG|>.
-  // max_new_tokens high enough for lang token + a short lyric scrap for script fallback.
-  const cfg = { max_new_tokens: 64, do_sample: false, task: 'transcribe' };
+  const cfg = { max_new_tokens: maxTokens, do_sample: false, task: 'transcribe' };
   try {
     return await model.generate(input_features, cfg);
   } catch (_) {
     try {
-      return await model.generate(input_features, { max_new_tokens: 64, do_sample: false });
+      return await model.generate(input_features, { max_new_tokens: maxTokens, do_sample: false });
     } catch (_) {
-      return await model.generate({ input_features, max_new_tokens: 64 });
+      return await model.generate({ input_features, max_new_tokens: maxTokens });
     }
   }
 }
 
 async function detectOne(audio) {
   audio = normalize(toFloat32(audio));
-
   const input_features = await extractFeatures(audio);
-  const output = await generateTokens(input_features);
-  const ids = tokenIds(output);
 
-  const text = (tokenizer.decode(ids, { skip_special_tokens: true }) || '').trim();
+  // Fast path: a few tokens, read the language token.
+  let ids = tokenIds(await generateTokens(input_features, FAST_TOKENS));
   let code = codeFromIds(ids);
-  let method = code ? 'token' : null;
+  if (code) return { code, prob: null, text: '', method: 'token' };
 
+  // Retry path: full decode, then token / script fallback as before.
+  ids = tokenIds(await generateTokens(input_features, FULL_TOKENS));
+  const text = (tokenizer.decode(ids, { skip_special_tokens: true }) || '').trim();
+  code = codeFromIds(ids);
+  let method = code ? 'token' : null;
   if (!code) {
     code = codeFromScript(text);
     method = code ? 'script' : 'none';
   }
-
   return { code, prob: null, text: text.slice(0, 160), method };
 }
 
@@ -231,6 +242,8 @@ async function detect(msg) {
     } catch (e) {
       out.push({ code: null, prob: null, text: '', method: 'error', error: errText(e) });
     }
+    // Early stop: the first two windows agree, so the third can't change the vote.
+    if (msg.earlyStop && i === 1 && out[0].code && out[0].code === out[1].code) break;
   }
   post({ type: 'result', id: msg.id, windows: out });
 }
