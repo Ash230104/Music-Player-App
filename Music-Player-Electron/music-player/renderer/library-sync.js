@@ -17,10 +17,26 @@
   const SYNC_DEBOUNCE_MS = 2500;
   let syncTimer = null;
   let lastRevision = 0;
-  // In-memory cache for audio blobs added this session.
-  // New songs land here first so playback works immediately while
-  // the async disk write (uploadAudio) is in flight. No IDB write needed.
-  const blobCache = new Map();
+  let lastSyncHash = null;
+  // Audio blobs whose disk write hasn't been confirmed yet. A brand-new song lives
+  // only here until the server has it, so playback works immediately. Entries are
+  // dropped the moment the server confirms the write; nothing is kept after that.
+  const pendingAudio = new Map();
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Fast non-crypto string hash (cyrb53) used to skip re-sending an unchanged snapshot.
+  function hashString(str) {
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (h2 >>> 0).toString(16) + (h1 >>> 0).toString(16);
+  }
 
   /* ------------------------------------------------------------------ helpers */
 
@@ -106,9 +122,7 @@
     const statsDb = await openPlayStatsDb();
     const playStats = await getAllPlayStats(statsDb);
 
-    lastRevision++;
     return {
-      revision: lastRevision,
       songs: songsClean,
       playlists: safeLocalStorage('playlists', []),
       playlistInstruments: safeLocalStorage('playlistInstruments', {}),
@@ -134,17 +148,22 @@
 
   async function doSync() {
     try {
-      const snapshot = await buildSnapshot();
-      if (!snapshot) return;
+      const content = await buildSnapshot();
+      if (!content) return;
+      // Nothing changed since the last successful sync: don't send anything.
+      const hash = hashString(JSON.stringify(content));
+      if (hash === lastSyncHash) return;
       const res = await fetch('/library-sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(snapshot),
+        body: JSON.stringify({ revision: ++lastRevision, ...content }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.warn('[library-sync] server error:', err.error || res.status);
+        return;
       }
+      lastSyncHash = hash;
     } catch (err) {
       console.warn('[library-sync] sync failed:', err.message);
     }
@@ -158,46 +177,65 @@
     syncTimer = setTimeout(doSync, SYNC_DEBOUNCE_MS);
   }
 
-  /**
-   * Upload one song's audio blob to the server for permanent storage.
-   * Also caches the blob in RAM so playback works immediately while the
-   * disk write is in flight — no IDB write needed.
-   * Safe to call multiple times — server skips if file already exists.
-   */
-  async function uploadAudio(songId, blob) {
-    if (!songId || !blob) return;
-    // Cache in RAM first — getSongBlob checks here before hitting disk
-    blobCache.set(String(songId), blob);
+  /** POST one audio blob. Resolves true only if the server confirmed the write. */
+  async function postAudio(songId, blob) {
     try {
-      await fetch(`/library-save-audio?id=${encodeURIComponent(String(songId))}`, {
+      const res = await fetch(`/library-save-audio?id=${encodeURIComponent(String(songId))}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/octet-stream' },
         body: blob,
       });
+      if (res.ok) return true;
+      console.warn('[library-sync] audio upload failed: HTTP', res.status);
     } catch (err) {
       console.warn('[library-sync] audio upload failed:', err.message);
     }
-  }
-
-  /** Return a cached blob for a song added this session (before disk confirmed). */
-  function getCachedBlob(songId) {
-    return blobCache.get(String(songId)) || null;
+    return false;
   }
 
   /**
-   * Upload one song's cover blob.
+   * Upload a newly added song's audio to disk (its only permanent copy).
+   * The blob is held in RAM just until the server confirms the write, so the
+   * song is playable immediately; after that it is released. If every retry
+   * fails the blob stays held, because it is the only copy.
+   */
+  async function uploadAudio(songId, blob) {
+    if (songId == null || !blob) return false;
+    const key = String(songId);
+    pendingAudio.set(key, blob);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (await postAudio(key, blob)) {
+        pendingAudio.delete(key);
+        return true;
+      }
+      await sleep(1000 * attempt);
+    }
+    return false;
+  }
+
+  /** Blob for a song whose disk write isn't confirmed yet, else null. */
+  function getCachedBlob(songId) {
+    return pendingAudio.get(String(songId)) || null;
+  }
+
+  /**
+   * Upload one song's cover blob. Resolves true if the server confirmed it.
+   * (The server skips the write if the file is byte-identical.)
    */
   async function uploadCover(songId, blob) {
-    if (!songId || !blob) return;
+    if (songId == null || !blob) return false;
     try {
-      await fetch(`/library-save-cover?id=${encodeURIComponent(String(songId))}`, {
+      const res = await fetch(`/library-save-cover?id=${encodeURIComponent(String(songId))}`, {
         method: 'POST',
         headers: { 'Content-Type': 'image/jpeg' },
         body: blob,
       });
+      if (res.ok) return true;
+      console.warn('[library-sync] cover upload failed: HTTP', res.status);
     } catch (err) {
       console.warn('[library-sync] cover upload failed:', err.message);
     }
+    return false;
   }
 
   /**
@@ -229,23 +267,16 @@
    */
   async function checkAndRestore() {
     try {
+      // Cheap local check first: only fetch the (large) snapshot if IDB is empty.
+      const musicDb = window.openMusicDb ? await window.openMusicDb() : null;
+      if (!musicDb) return { restored: false, snapshot: null };
+      if ((await idbCount(musicDb, 'songs')) > 0) return { restored: false, snapshot: null };
+
       const res = await fetch('/library-snapshot');
       if (!res.ok) return { restored: false, snapshot: null };
       const data = await res.json();
       if (!data.exists || !data.snapshot) return { restored: false, snapshot: null };
 
-      // Check if IndexedDB is empty
-      const musicDb = window.openMusicDb ? await window.openMusicDb() : null;
-      if (!musicDb) return { restored: false, snapshot: null };
-
-      const songCount = await idbCount(musicDb, 'songs');
-      if (songCount > 0) {
-        // IDB has data - compare revisions and use newer
-        // (Current IDB wins; snapshot is just a safety net)
-        return { restored: false, snapshot: data.snapshot };
-      }
-
-      // IDB is empty - restore from snapshot
       console.log('[library-sync] IndexedDB empty, restoring from library.json…');
       await restoreSnapshot(musicDb, data.snapshot);
       return { restored: true, snapshot: data.snapshot };
@@ -344,60 +375,91 @@
   /* --------------------------------------------------------------- backfill */
 
   /**
-   * One-time migration: upload every existing audio blob + cover from IndexedDB
-   * to the server so the library/ folder is fully populated for existing libraries.
+   * Migration/self-heal: make sure every audio blob (legacy songBlobs store) and cover
+   * in IndexedDB also exists on disk. Asks the server what it already has and uploads
+   * only what is missing, so a fully mirrored library costs one small GET and a couple
+   * of key lookups, with no uploads and no blob reads.
    *
-   * Safe to call multiple times — the server skips audio files that already exist
-   * on disk. Progress is logged to the console.
+   * The legacy songBlobs store is only cleared after the server confirms every one of
+   * its songs is on disk.
    *
-   * Called automatically on startup. Can also be triggered manually from DevTools:
-   *   window.LibrarySync.backfillAll()
+   * Runs automatically on startup. Manual trigger: window.LibrarySync.backfillAll()
    */
+  async function fetchInventory() {
+    try {
+      const res = await fetch('/library-inventory');
+      if (!res.ok) return null;
+      const j = await res.json();
+      return {
+        audio: new Set((j.audio || []).map(String)),
+        covers: new Set((j.covers || []).map(String)),
+      };
+    } catch (_) { return null; }
+  }
+
+  function idbKeys(db, storeName) {
+    return new Promise((resolve) => {
+      try {
+        const req = db.transaction(storeName, 'readonly').objectStore(storeName).getAllKeys();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      } catch (_) { resolve([]); }
+    });
+  }
+
+  function idbGetOne(db, storeName, key) {
+    return new Promise((resolve) => {
+      try {
+        const req = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      } catch (_) { resolve(null); }
+    });
+  }
+
   async function backfillAll() {
     const musicDb = window.openMusicDb ? await window.openMusicDb() : null;
     if (!musicDb) return;
 
-    // --- audio blobs ---
-    const blobs = await new Promise((resolve) => {
-      try {
-        const tx = musicDb.transaction('songBlobs', 'readonly');
-        const req = tx.objectStore('songBlobs').getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => resolve([]);
-      } catch (_) { resolve([]); }
-    });
-
-    console.log(`[library-sync] Backfill: uploading ${blobs.length} audio blobs…`);
-    for (const row of blobs) {
-      if (!row || row.id == null || !row.file) continue;
-      await uploadAudio(row.id, row.file);
+    let inventory = await fetchInventory();
+    if (!inventory) {
+      console.warn('[library-sync] Backfill skipped: server inventory unavailable.');
+      return;
     }
 
-    // --- covers ---
-    const covers = await new Promise((resolve) => {
-      try {
-        const tx = musicDb.transaction('songCovers', 'readonly');
-        const req = tx.objectStore('songCovers').getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => resolve([]);
-      } catch (_) { resolve([]); }
-    });
+    let uploaded = false;
 
-    console.log(`[library-sync] Backfill: uploading ${covers.length} covers…`);
-    for (const row of covers) {
-      if (!row || row.id == null || !row.blob) continue;
-      await uploadCover(row.id, row.blob);
+    // --- legacy audio blobs: upload only the ones missing on disk, one at a time ---
+    const blobKeys = await idbKeys(musicDb, 'songBlobs');
+    const missingAudio = blobKeys.filter((k) => !inventory.audio.has(String(k)));
+    if (missingAudio.length) console.log(`[library-sync] Backfill: uploading ${missingAudio.length} audio blobs…`);
+    for (const key of missingAudio) {
+      const row = await idbGetOne(musicDb, 'songBlobs', key);
+      if (row && row.file && await postAudio(key, row.file)) uploaded = true;
     }
 
-    // --- metadata snapshot ---
-    console.log('[library-sync] Backfill: writing metadata snapshot…');
-    await doSync();
+    // --- covers: same idea ---
+    const coverKeys = await idbKeys(musicDb, 'songCovers');
+    const missingCovers = coverKeys.filter((k) => !inventory.covers.has(String(k)));
+    if (missingCovers.length) console.log(`[library-sync] Backfill: uploading ${missingCovers.length} covers…`);
+    for (const key of missingCovers) {
+      const row = await idbGetOne(musicDb, 'songCovers', key);
+      if (row && row.blob && await uploadCover(key, row.blob)) uploaded = true;
+    }
 
-    // --- free the duplicate IDB storage now everything is on disk ---
-    console.log('[library-sync] Backfill: clearing songBlobs from IDB…');
-    await clearBlobStore();
+    if (uploaded) {
+      await doSync();
+      inventory = await fetchInventory();
+    }
 
-    console.log('[library-sync] Backfill complete. Audio served from disk only.');
+    // --- free the legacy IDB audio copy, but only if the disk has all of it ---
+    if (blobKeys.length) {
+      if (inventory && blobKeys.every((k) => inventory.audio.has(String(k)))) {
+        await clearBlobStore();
+      } else {
+        console.warn('[library-sync] Backfill: some audio not confirmed on disk; keeping songBlobs in IndexedDB.');
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ expose */
@@ -414,9 +476,13 @@
   };
 
   // Auto-run backfill on startup so existing libraries are fully mirrored.
+  // On an already-mirrored library this is just one GET /library-inventory.
   // Wrapped in setTimeout so the page's openDb() call finishes first.
+  // Runs when the browser is idle so it never competes with startup/clicks.
   setTimeout(() => {
-    backfillAll().catch((err) => console.warn('[library-sync] Backfill error:', err));
+    const run = () => backfillAll().catch((err) => console.warn('[library-sync] Backfill error:', err));
+    if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 15000 });
+    else run();
   }, 3000);
 
 })();

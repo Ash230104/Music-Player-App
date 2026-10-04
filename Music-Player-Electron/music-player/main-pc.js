@@ -10,7 +10,6 @@ const { createServer } = require('./server');
 const { createDownloader } = require('./downloader');
 const { createBinaries } = require('./binaries');
 const { createGoogleAuth } = require('./google-auth');
-const { createCloudSync } = require('./cloud-sync');
 
 // FIXED port - see the note at the top of server.js (your library is stored per origin).
 const PORT = parseInt(process.env.MUSIC_PLAYER_PORT || '48731', 10);
@@ -24,7 +23,6 @@ let miniHasSong = false;
 let server = null;
 let downloader = null;
 let binaries = null;
-let cloud = null;
 let quitting = false;
 
 // ------------------------------------------------------------------ paths --
@@ -94,9 +92,6 @@ async function start() {
 
   const libraryStore = createLibraryStore({ libraryDir, log });
 
-  // Cloud mirror (optional): copies the library to a bucket so the phone app can play it. See cloud-sync.js.
-  cloud = createCloudSync({ userData, libraryDir, libraryStore, log });
-
   // Google sign-in (optional): lets the downloader read the user's private YouTube playlists.
   const google = createGoogleAuth({
     userData,
@@ -123,7 +118,6 @@ async function start() {
     importDir,
     libraryStore,
     google,
-    onLibraryChanged: () => cloud.scheduleSync(),
     onDownload: (url, known) => downloader.enqueue(url, known),
     onCancel: () => downloader.cancel(),
     log,
@@ -147,7 +141,6 @@ async function start() {
 
   buildMenu();
   createWindow();
-  cloud.start();
 
   // Prepare / update yt-dlp in the background; never blocks the UI.
   binaries.prepare().then(async () => {
@@ -478,54 +471,6 @@ async function manualUpdate(channel) {
   });
 }
 
-// ------------------------------------------------------------ cloud menu --
-function cloudNotSetUp() {
-  return say({
-    type: 'info',
-    message: 'Cloud sync is not set up yet',
-    detail:
-      'Choose Cloud → Open cloud settings file, paste your bucket endpoint and the PC application key, ' +
-      'save the file, then choose Cloud → Test connection.',
-  });
-}
-
-function cloudOpenSettings() {
-  shell.openPath(cloud.ensureConfigFile());
-}
-
-async function cloudTest() {
-  if (!cloud.isConfigured()) return cloudNotSetUp();
-  const r = await cloud.testConnection();
-  return say({ type: r.ok ? 'info' : 'error', message: r.ok ? 'Cloud connection works' : 'Cloud connection failed', detail: r.message });
-}
-
-async function cloudSyncNow() {
-  if (!cloud.isConfigured()) return cloudNotSetUp();
-  if (cloud.status().running) return cloudStatus();
-  say({
-    type: 'info',
-    message: 'Cloud sync started',
-    detail: 'Uploading in the background. The first run copies your whole library and can take a while; ' +
-      'you can keep using the app. Choose Cloud → Sync status to check progress.',
-  });
-  const r = await cloud.sync({ full: true });
-  return say({ type: r.ok ? 'info' : 'warning', message: r.ok ? 'Cloud sync finished' : 'Cloud sync did not finish', detail: r.message });
-}
-
-function cloudStatus() {
-  const s = cloud.status();
-  if (!s.configured) return cloudNotSetUp();
-  const lines = [];
-  if (s.running) {
-    const p = s.progress;
-    lines.push(p.total ? `${p.phase} ${p.done} of ${p.total}` : p.phase);
-  } else {
-    lines.push('Idle.');
-  }
-  if (s.last) lines.push(`Last run (${new Date(s.last.at).toLocaleString()}): ${s.last.message}`);
-  return say({ type: 'info', message: 'Cloud sync', detail: lines.join('\n\n') });
-}
-
 function buildMenu() {
   const template = [
     {
@@ -578,16 +523,6 @@ function buildMenu() {
             say({ message: 'Downloads cancelled' });
           },
         },
-      ],
-    },
-    {
-      label: 'Cloud',
-      submenu: [
-        { label: 'Sync now', click: () => cloudSyncNow() },
-        { label: 'Sync status', click: () => cloudStatus() },
-        { label: 'Test connection', click: () => cloudTest() },
-        { type: 'separator' },
-        { label: 'Open cloud settings file', click: () => cloudOpenSettings() },
       ],
     },
     {

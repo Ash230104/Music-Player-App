@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Solance</title>
+  <title>Music Player</title>
   <link rel="stylesheet" href="/cassette.css">
   <script src="/library-sync.js"></script>
   <style>
@@ -1308,34 +1308,41 @@
       display: block;
     }
 
-    /* Dock cassette: refined mini version of the main deck's cassette (same mini cassette as the mini-player) */
-    .dock-cassette { flex: none; width: 60px; aspect-ratio: 64 / 42; }
-    .dock-cassette svg { display: block; width: 100%; height: 100%; overflow: visible; }
-    .mc-shell { fill: color-mix(in srgb, var(--accent2) 55%, #e8eef8); }
-    .mc-label { fill: #f4f7ff; }
-    .mc-stripe { fill: var(--accent); }
-    .mc-label-line { fill: #566a94; opacity: .55; }
-    .mc-window, .mc-well { fill: color-mix(in srgb, var(--s1) 75%, #0a1120); }
-    .mc-screw { fill: color-mix(in srgb, var(--s1) 85%, #000); }
-    .mc-hub {
-      transform-box: fill-box; transform-origin: center;
-      animation: mc-spin 1.7s linear infinite reverse; animation-play-state: paused;
+    /* Dock vinyl: metallic grooves + a fixed light sheen that doesn't spin with the disc */
+    :root {
+      --dock-vinyl:
+        radial-gradient(circle, #e8f2ff 0 3%, var(--accent) 4% 15%, #16234a 16% 18%, var(--edge) 19% 22%, transparent 23%),
+        repeating-radial-gradient(circle, #070c1a 0 1px, #2a3d66 1.5px 2px, #0d1630 2.5px 3px);
     }
-    .mc-tape-run {
-      stroke-dasharray: 1.2 1.8;
-      animation: mc-tape .45s linear infinite; animation-play-state: paused;
+
+    .dock-cd,
+    .home-dock-cd {
+      position: relative;
+      box-shadow:
+        inset 0 0 0 1px rgba(190, 220, 255, .42),
+        inset 0 0 6px rgba(120, 170, 255, .28),
+        0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
     }
-    body.is-playing .mc-hub, body.is-playing .mc-tape-run { animation-play-state: running; }
-    @keyframes mc-spin { to { transform: rotate(360deg); } }
-    @keyframes mc-tape { to { stroke-dashoffset: -3; } }
-    /* new song: cassette drops in + title slides up (matches mini player) */
-    .dock-cassette.drop { animation: dock-insert .45s cubic-bezier(.2,.8,.3,1); }
-    @keyframes dock-insert { from { transform: translateY(-12px); opacity: 0; } 60% { opacity: 1; } to { transform: none; opacity: 1; } }
-    #home-dock-song-name.swap, #dock-song-name.swap { animation: dock-swap .35s cubic-bezier(.2,.9,.3,1.2); }
-    @keyframes dock-swap { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .dock-cassette.drop, #home-dock-song-name.swap, #dock-song-name.swap { animation: none; } }
-    @media (prefers-reduced-motion: reduce) { .mc-hub, .mc-tape-run { animation: none; } }
-    #home-dock-back-btn:disabled { opacity: .35; pointer-events: none; }
+
+    .dock-cd::after,
+    .home-dock-cd::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      pointer-events: none;
+      background:
+        conic-gradient(from 25deg,
+          transparent 0 6%, rgba(215, 236, 255, .75) 13%, transparent 21%,
+          transparent 50%, rgba(215, 236, 255, .75) 63%, transparent 71%, transparent 100%),
+        radial-gradient(circle at 30% 25%, rgba(255, 255, 255, .28), transparent 45%);
+      -webkit-mask: radial-gradient(circle, transparent 0 22%, #000 24%);
+      mask: radial-gradient(circle, transparent 0 22%, #000 24%);
+      mix-blend-mode: screen;
+      /* counter-rotate so the light stays put while the disc spins */
+      animation: spin 3s linear infinite reverse;
+      animation-play-state: inherit;
+    }
 
     /* Page transition between homepage and playlist page */
     ::view-transition-old(root),
@@ -1443,6 +1450,21 @@
       flex: 1;
       min-width: 0;
       cursor: pointer;
+    }
+
+    .home-dock-cd {
+      flex-shrink: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 2px solid var(--edge);
+      background: var(--dock-vinyl);
+      animation: spin 3s linear infinite;
+      animation-play-state: paused;
+    }
+
+    body.is-playing .home-dock-cd {
+      animation-play-state: running;
     }
 
     .home-dock-text {
@@ -2990,6 +3012,10 @@
       height: 20px
     }
 
+    .fav-btn.active {
+      color: var(--accent)
+    }
+
     .remove-btn {
       padding: 6px;
       color: #ff7b7b
@@ -3382,6 +3408,21 @@
     #dock-song-artist {
       font-size: 12px;
       color: var(--mute)
+    }
+
+    .dock-cd {
+      flex-shrink: 0;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 2px solid var(--edge);
+      background: var(--dock-vinyl);
+      animation: spin 3s linear infinite;
+      animation-play-state: paused
+    }
+
+    .dock-cd-inner {
+      display: none
     }
 
     .dock-controls {
@@ -4076,54 +4117,49 @@
       }
     }
 
-    /* the playing song's row: a soft accent-tinted tile (no shine), plus equalizer bars next to the heart */
-    .song-item {
-      position: relative;
+    /* the playing song's title gleams with a slanting streak of light; white
+   instead of blue if it's also a favourite (which is already blue text) */
+    .song-item.now-playing .song-title.shine-play {
+      background: linear-gradient(100deg, var(--ink) 35%, var(--accent) 50%, var(--ink) 65%) no-repeat;
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      animation: titleShine 2.6s linear infinite alternate;
     }
 
-    .song-item.now-playing {
-      background: color-mix(in srgb, var(--accent) 9%, transparent);
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+    .song-item.now-playing.favorite-song .song-title.shine-play {
+      background: linear-gradient(100deg, var(--accent) 35%, #ffffff 50%, var(--accent) 65%) no-repeat;
+      background-size: 200% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
     }
 
-    .song-eq {
-      display: none;
-      align-items: flex-end;
-      gap: 2px;
-      width: 16px;
-      height: 14px;
-      flex: none;
-    }
+    @keyframes titleShine {
+      0% {
+        background-position: 100% 0
+      }
 
-    .song-item.now-playing .song-eq {
-      display: inline-flex;
-    }
-
-    .song-eq i {
-      flex: 1;
-      height: 100%;
-      border-radius: 1px;
-      background: var(--accent);
-      transform-origin: bottom;
-      transform: scaleY(.3);
-      animation: songEq 1s ease-in-out infinite;
-      animation-play-state: paused;
-    }
-
-    .song-eq i:nth-child(2) { animation-duration: .8s; animation-delay: -.3s; }
-    .song-eq i:nth-child(3) { animation-duration: 1.15s; animation-delay: -.6s; }
-
-    body.is-playing .song-item.now-playing .song-eq i {
-      animation-play-state: running;
-    }
-
-    @keyframes songEq {
-      0%, 100% { transform: scaleY(.3); }
-      50% { transform: scaleY(1); }
+      100% {
+        background-position: 0% 0
+      }
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .song-eq i { animation: none; transform: scaleY(.6); }
+      .song-item.now-playing .song-title.shine-play {
+        animation: none;
+        background: none;
+        color: var(--ink);
+        -webkit-text-fill-color: var(--ink)
+      }
+
+      .song-item.now-playing.favorite-song .song-title.shine-play {
+        color: var(--accent);
+        -webkit-text-fill-color: var(--accent)
+      }
     }
 
     /* This used to be .youtube-import-btn, but nothing in the markup actually
@@ -4186,6 +4222,15 @@
       color: var(--accent) !important;
       fill: var(--accent) !important;
       stroke: var(--accent) !important;
+    }
+
+    /* Home dock progress already uses --sun; strengthen accent on vinyl hub */
+    .home-dock-cd,
+    .dock-cd {
+      box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--accent2) 45%, transparent),
+        inset 0 0 6px color-mix(in srgb, var(--accent) 30%, transparent),
+        0 0 8px color-mix(in srgb, var(--accent) 40%, transparent) !important;
     }
 
     /* Playlist card face already uses --c; ensure instrument strokes stay readable on any mood */
@@ -4624,44 +4669,6 @@
       }
     }
 
-    /* ---- Settings -> Google account ---- */
-    .g-status { display: block; font-size: 12px; color: var(--mute); }
-    .g-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: var(--ink); }
-    .g-field input {
-      padding: 9px 10px; font-size: 13px; color: var(--ink); background: var(--s2);
-      border: 2px solid var(--line); border-radius: 10px; min-width: 0;
-    }
-    .g-help { font-size: 12px; color: var(--mute); line-height: 1.45; margin: 0; }
-    /* Padding leaves room for the 2px press-shift + shadow of the buttons; overflow-x stays hidden
-       (a vertical-scroll box otherwise grows a horizontal bar the moment a button is pressed). */
-    .g-list { display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-x: hidden; overflow-y: auto; padding: 0 6px 6px 0; }
-    .g-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
-    .g-item .g-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .g-item .g-meta { font-size: 11px; color: var(--mute); white-space: nowrap; flex-shrink: 0; }
-    .g-item .cover-btn { flex-shrink: 0; }
-    .modal-content .g-item .cover-btn { padding: 5px 9px; font-size: 12px; }
-    #opt-google [hidden] { display: none !important; }
-    .g-btn-door { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-    .g-btn-door .g-btn-icon { flex-shrink: 0; }
-    /* Smooth open/close for "Show my playlists" (same 0fr -> 1fr trick as the settings accordions).
-       margin-top cancels the parent's flex gap while collapsed; the inner padding restores it when open. */
-    .g-collapse {
-      display: grid; grid-template-rows: 0fr; margin-top: -12px;
-      transition: grid-template-rows .3s cubic-bezier(.22, 1, .36, 1);
-    }
-    .g-collapse.open { grid-template-rows: 1fr; }
-    .g-collapse-inner {
-      min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 12px; padding-top: 12px;
-      opacity: 0; visibility: hidden; transform: translateY(-6px);
-      transition: opacity .25s ease, transform .3s cubic-bezier(.22, 1, .36, 1), visibility 0s linear .3s;
-    }
-    .g-collapse.open .g-collapse-inner {
-      opacity: 1; visibility: visible; transform: none;
-      transition: opacity .25s ease .05s, transform .3s cubic-bezier(.22, 1, .36, 1), visibility 0s;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .g-collapse, .g-collapse-inner, .g-collapse.open .g-collapse-inner { transition: none; }
-    }
     .cover-opts {
       display: flex;
       flex-direction: column;
@@ -4758,43 +4765,34 @@
       display: none !important;
     }
 
-    /* Favourite heart: sits left of the ⋮ button on every row (also in Recently On Loop and
-       Forgotten Favourites, whose ⋮ menu is hidden). Outline = not favourited, filled = favourited. */
-    .song-heart-btn {
-      display: inline-flex;
-      align-items: center;
+    /* Liked Songs only: a heart on the right of each row replaces the hidden ⋮ menu.
+       Clicking it un-likes the song (same crack animation as in a normal playlist). */
+    .liked-heart-btn {
+      display: none;
       padding: 2px 10px;
+      font-size: 20px;
       line-height: 1;
-      color: var(--mute);
+      color: var(--accent);
       background: none;
       border: 0;
       cursor: pointer;
-      transition: transform .15s ease, opacity .15s ease, color .2s ease;
+      transition: transform .15s ease, opacity .15s ease;
     }
 
-    .song-heart-btn svg {
-      display: block;
-      fill: none;
-      transition: fill .2s ease;
+    body.liked-playlist #song-list .song-item .liked-heart-btn {
+      display: inline-flex;
+      align-items: center;
     }
 
-    .song-heart-btn.active {
-      color: var(--accent);
-    }
-
-    .song-heart-btn.active svg {
-      fill: currentColor;
-    }
-
-    .song-heart-btn:hover {
+    .liked-heart-btn:hover {
       transform: scale(1.18);
     }
 
-    .song-heart-btn:active {
+    .liked-heart-btn:active {
       transform: scale(.9);
     }
 
-    .song-heart-btn:disabled {
+    .liked-heart-btn:disabled {
       pointer-events: none;
       color: var(--mute);
     }
@@ -5927,20 +5925,13 @@
   <div id="home-dock">
     <div class="dock-progress" aria-hidden="true"></div>
     <div class="home-dock-info" id="home-dock-info">
-      <div class="dock-cassette" aria-hidden="true">
-<svg viewBox="0 0 64 42" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="60" height="38" rx="5.5" fill="#03060c" opacity=".5"/><rect class="mc-shell" x="1" y="1" width="60" height="38" rx="5.5" stroke="#03060c" stroke-width="1.6"/><rect x="6" y="2.4" width="50" height="1.2" rx=".6" fill="#fff" opacity=".5"/><g class="mc-screw"><circle cx="4.2" cy="5.2" r="1"/><circle cx="57.8" cy="5.2" r="1"/><circle cx="4.2" cy="34.8" r="1"/><circle cx="57.8" cy="34.8" r="1"/></g><rect class="mc-label" x="7" y="5" width="48" height="25" rx="3" stroke="#03060c" stroke-width="1"/><rect class="mc-stripe" x="7.6" y="5.6" width="46.8" height="2.6" rx="1.2"/><rect class="mc-label-line" x="10" y="9" width="17" height="1.1" rx=".55"/><rect class="mc-window" x="15" y="11" width="32" height="14" rx="7" stroke="#03060c" stroke-width="1.2"/><g transform="translate(23 18)"><circle r="5.2" fill="#5a4033" stroke="#8a664f" stroke-width=".5"/><g class="mc-hub"><circle r="3.5" fill="#f4f7ff" stroke="#03060c" stroke-width=".7"/><circle r="2.1" fill="#0a1120"/><g stroke="#f4f7ff" stroke-width=".7" stroke-linecap="round"><path d="M0 -2.1V-1.2" transform="rotate(0)"/><path d="M0 -2.1V-1.2" transform="rotate(60)"/><path d="M0 -2.1V-1.2" transform="rotate(120)"/><path d="M0 -2.1V-1.2" transform="rotate(180)"/><path d="M0 -2.1V-1.2" transform="rotate(240)"/><path d="M0 -2.1V-1.2" transform="rotate(300)"/></g><circle cy="-2.8" r=".4" fill="#03060c"/></g></g><g transform="translate(39 18)"><circle r="5.2" fill="#5a4033" stroke="#8a664f" stroke-width=".5"/><g class="mc-hub"><circle r="3.5" fill="#f4f7ff" stroke="#03060c" stroke-width=".7"/><circle r="2.1" fill="#0a1120"/><g stroke="#f4f7ff" stroke-width=".7" stroke-linecap="round"><path d="M0 -2.1V-1.2" transform="rotate(0)"/><path d="M0 -2.1V-1.2" transform="rotate(60)"/><path d="M0 -2.1V-1.2" transform="rotate(120)"/><path d="M0 -2.1V-1.2" transform="rotate(180)"/><path d="M0 -2.1V-1.2" transform="rotate(240)"/><path d="M0 -2.1V-1.2" transform="rotate(300)"/></g><circle cy="-2.8" r=".4" fill="#03060c"/></g></g><path class="mc-well" d="M14 38.4L18.5 30.6H43.5L48 38.4Z" stroke="#03060c" stroke-width="1.1" stroke-linejoin="round"/><rect x="27" y="31.6" width="8" height="3.4" rx=".7" fill="#03060c"/><rect x="28.6" y="32.4" width="4.8" height="1.8" rx=".4" fill="#8fa0c4"/><path d="M21 36.4H41" stroke="#5a4033" stroke-width="1.4" stroke-linecap="round"/><path class="mc-tape-run" d="M21 36.4H41" stroke="#c7a48b" stroke-width=".6" fill="none"/><circle cx="21" cy="36.4" r="1.5" fill="#dfe6f7" stroke="#03060c" stroke-width=".6"/><circle cx="41" cy="36.4" r="1.5" fill="#dfe6f7" stroke="#03060c" stroke-width=".6"/></svg>
-</div>
+      <div class="home-dock-cd"></div>
       <div class="home-dock-text">
         <div id="home-dock-song-name">No song playing</div>
         <div id="home-dock-song-artist">—</div>
       </div>
     </div>
     <div class="home-dock-controls">
-      <button id="home-dock-back-btn" title="Back" disabled>
-        <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" width="22" height="22">
-          <path d="M17 6v12L7 12l10-6zM7 6v12H5V6h2z" />
-        </svg>
-      </button>
       <button id="home-dock-play-btn" title="Play/Pause">
         <svg id="home-dock-play-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"
           width="22" height="22">
@@ -6017,34 +6008,6 @@
             </label>
             <button type="button" class="cover-btn" id="covers-backfill-btn">Download covers for existing songs</button>
             <span id="covers-status"></span>
-          </div>
-        </div></div>
-      </section>
-
-      <!-- Main option 3: Google account (lets the downloader read your private YouTube playlists). -->
-      <section class="settings-opt" id="opt-google">
-        <button type="button" class="settings-opt-head" aria-expanded="false">
-          <span>Google account</span>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-        </button>
-        <div class="settings-opt-body"><div>
-          <div class="cover-opts">
-            <span class="g-status" id="google-status"></span>
-
-            <div id="google-setup" hidden>
-              <p class="g-help">One-time setup: in Google Cloud Console create a project, enable <b>YouTube Data API v3</b>, and create an OAuth client of type <b>Desktop app</b>. Paste its client ID and secret here. Playlists are only read, never changed.</p>
-              <label class="g-field">Client ID<input type="text" id="google-client-id" autocomplete="off" spellcheck="false"></label>
-              <label class="g-field">Client secret<input type="password" id="google-client-secret" autocomplete="off" spellcheck="false"></label>
-              <button type="button" class="cover-btn" id="google-save-btn">Save</button>
-            </div>
-
-            <button type="button" class="cover-btn g-btn-door" id="google-signin-btn" hidden><span class="g-btn-label">Sign in with Google</span><svg class="g-btn-icon" viewBox="0 0 30 24" width="23" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 21h14"/><path d="M3 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17"/><path d="M3 4l5.5 2.5v12L3 21z"/><circle cx="6.8" cy="12.6" r=".7" fill="currentColor" stroke="none"/><path d="M17 12h10"/><path d="M21 8l-4 4 4 4"/></svg></button>
-            <button type="button" class="cover-btn" id="google-list-btn" hidden>Show my playlists</button>
-            <div class="g-collapse" id="google-list-wrap" aria-hidden="true"><div class="g-collapse-inner">
-              <div class="g-list" id="google-list"></div>
-              <p class="g-help" id="google-list-help">Copy a playlist's link, then paste it into a playlist's YouTube import box. Private playlists work once you are signed in.</p>
-            </div></div>
-            <button type="button" class="cover-btn g-btn-door" id="google-signout-btn" hidden><span class="g-btn-label">Sign out</span><svg class="g-btn-icon" viewBox="0 0 30 24" width="23" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 21h14"/><path d="M3 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17"/><path d="M3 4l5.5 2.5v12L3 21z"/><circle cx="6.8" cy="12.6" r=".7" fill="currentColor" stroke="none"/><path d="M17 12h10"/><path d="M23 8l4 4-4 4"/></svg></button>
           </div>
         </div></div>
       </section>
@@ -8530,9 +8493,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
           };
           transaction.oncomplete = () => {
             if (window.LibrarySync) window.LibrarySync.scheduleSync();
-            // The cards were redrawn before these entries carried the new name, so their cover
-            // lookup found no songs and cleared the cover. Redo it now that the rename is stored.
-            if (window.Covers) window.Covers.refreshAll();
           };
         });
 
@@ -9321,7 +9281,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
       const homeDockPlayIcon = document.getElementById('home-dock-play-icon');
       const homeDockPauseIcon = document.getElementById('home-dock-pause-icon');
       const homeDockNextBtn = document.getElementById('home-dock-next-btn');
-      const homeDockBackBtn = document.getElementById('home-dock-back-btn');
       const homeDockOpenBtn = document.getElementById('home-dock-open-btn');
       const homeDockInfo = document.getElementById('home-dock-info');
 
@@ -9349,9 +9308,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         if (!audio) return;
         if (audio.paused) audio.play(); else audio.pause();
       });
-      homeDockBackBtn.addEventListener('click', () => {
-        if (window.__playerPlayPrev) window.__playerPlayPrev();
-      });
       homeDockNextBtn.addEventListener('click', () => {
         if (window.__playerPlayNext) window.__playerPlayNext();
       });
@@ -9374,15 +9330,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         syncHomeDockPlay();
       });
       window.addEventListener('player:playpause', syncHomeDockPlay);
-
-      // Next/previous/new song: replay cassette drop + title swap on both docks (same as mini player)
-      (function () {
-        const replay = (el, cls) => { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
-        window.addEventListener('player:songchange', () => {
-          document.querySelectorAll('.dock-cassette').forEach(el => replay(el, 'drop'));
-          ['home-dock-song-name', 'dock-song-name'].forEach(id => replay(document.getElementById(id), 'swap'));
-        });
-      })();
 
       // Poll until audio element exists (player JS creates it)
       const waitForAudio = setInterval(() => {
@@ -10165,9 +10112,9 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
     <div id="bottom-dock">
       <div class="dock-progress" aria-hidden="true"></div>
       <div class="dock-song-info">
-        <div class="dock-cassette" aria-hidden="true">
-<svg viewBox="0 0 64 42" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="60" height="38" rx="5.5" fill="#03060c" opacity=".5"/><rect class="mc-shell" x="1" y="1" width="60" height="38" rx="5.5" stroke="#03060c" stroke-width="1.6"/><rect x="6" y="2.4" width="50" height="1.2" rx=".6" fill="#fff" opacity=".5"/><g class="mc-screw"><circle cx="4.2" cy="5.2" r="1"/><circle cx="57.8" cy="5.2" r="1"/><circle cx="4.2" cy="34.8" r="1"/><circle cx="57.8" cy="34.8" r="1"/></g><rect class="mc-label" x="7" y="5" width="48" height="25" rx="3" stroke="#03060c" stroke-width="1"/><rect class="mc-stripe" x="7.6" y="5.6" width="46.8" height="2.6" rx="1.2"/><rect class="mc-label-line" x="10" y="9" width="17" height="1.1" rx=".55"/><rect class="mc-window" x="15" y="11" width="32" height="14" rx="7" stroke="#03060c" stroke-width="1.2"/><g transform="translate(23 18)"><circle r="5.2" fill="#5a4033" stroke="#8a664f" stroke-width=".5"/><g class="mc-hub"><circle r="3.5" fill="#f4f7ff" stroke="#03060c" stroke-width=".7"/><circle r="2.1" fill="#0a1120"/><g stroke="#f4f7ff" stroke-width=".7" stroke-linecap="round"><path d="M0 -2.1V-1.2" transform="rotate(0)"/><path d="M0 -2.1V-1.2" transform="rotate(60)"/><path d="M0 -2.1V-1.2" transform="rotate(120)"/><path d="M0 -2.1V-1.2" transform="rotate(180)"/><path d="M0 -2.1V-1.2" transform="rotate(240)"/><path d="M0 -2.1V-1.2" transform="rotate(300)"/></g><circle cy="-2.8" r=".4" fill="#03060c"/></g></g><g transform="translate(39 18)"><circle r="5.2" fill="#5a4033" stroke="#8a664f" stroke-width=".5"/><g class="mc-hub"><circle r="3.5" fill="#f4f7ff" stroke="#03060c" stroke-width=".7"/><circle r="2.1" fill="#0a1120"/><g stroke="#f4f7ff" stroke-width=".7" stroke-linecap="round"><path d="M0 -2.1V-1.2" transform="rotate(0)"/><path d="M0 -2.1V-1.2" transform="rotate(60)"/><path d="M0 -2.1V-1.2" transform="rotate(120)"/><path d="M0 -2.1V-1.2" transform="rotate(180)"/><path d="M0 -2.1V-1.2" transform="rotate(240)"/><path d="M0 -2.1V-1.2" transform="rotate(300)"/></g><circle cy="-2.8" r=".4" fill="#03060c"/></g></g><path class="mc-well" d="M14 38.4L18.5 30.6H43.5L48 38.4Z" stroke="#03060c" stroke-width="1.1" stroke-linejoin="round"/><rect x="27" y="31.6" width="8" height="3.4" rx=".7" fill="#03060c"/><rect x="28.6" y="32.4" width="4.8" height="1.8" rx=".4" fill="#8fa0c4"/><path d="M21 36.4H41" stroke="#5a4033" stroke-width="1.4" stroke-linecap="round"/><path class="mc-tape-run" d="M21 36.4H41" stroke="#c7a48b" stroke-width=".6" fill="none"/><circle cx="21" cy="36.4" r="1.5" fill="#dfe6f7" stroke="#03060c" stroke-width=".6"/><circle cx="41" cy="36.4" r="1.5" fill="#dfe6f7" stroke="#03060c" stroke-width=".6"/></svg>
-</div>
+        <div class="dock-cd">
+          <div class="dock-cd-inner"></div>
+        </div>
 
         <div class="dock-song-text">
           <div id="dock-song-name">No song playing</div>
@@ -10295,7 +10242,7 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         const dockPlayIcon = document.getElementById("dock-play-icon");
         const dockPauseIcon = document.getElementById("dock-pause-icon");
         const dockNextBtn = document.getElementById("dock-next-btn");
-        const dockCd = document.querySelector("#bottom-dock .dock-cassette"); // reels are driven by body.is-playing in CSS
+        const dockCd = document.querySelector(".dock-cd");
         const playlistTools = document.querySelector(".playlist-tools");
         const playlistToolsBtn = document.getElementById("playlist-tools-btn");
         const moreOptions = document.querySelector(".more-options");
@@ -10430,7 +10377,7 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
               ms.metadata = new MediaMetadata({
                 title: d.name || "",
                 artist: d.artist || "",
-                album: "Solance",
+                album: "Music Player",
               });
             } catch (_) {}
             registerMediaHandlers();
@@ -11672,12 +11619,11 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
 
             songItem.innerHTML = `
                 <div class="song-main" title="Play This Now!!">
-                  <div class="song-title">${esc(song.name)}</div>
+                  <div class="song-title shine-play">${esc(song.name)}</div>
 
                   <div class="song-actions" style="display: flex; gap: 10px; align-items: center;">
                     <span class="song-analysing-icon" title="Analysing…"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></span>
-                    <span class="song-eq" aria-hidden="true"><i></i><i></i><i></i></span>
-                    <button class="song-heart-btn" title="Add to favorites" aria-label="Add to favorites" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button>
+                    <button class="liked-heart-btn" title="Remove from Liked Songs" aria-label="Remove from Liked Songs">❤</button>
                     <button class="more-btn" title="Options">⋮</button>
                   </div>
 
@@ -11705,6 +11651,10 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
                       </svg>
                     </button>
 
+                    <button class="fav-btn" title="Favorite">
+                      ❤
+                    </button>
+        
                     <button class="copy-btn" title="Add to another playlist"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/><path d="M15 12.5v5M12.5 15h5"/></svg></button>
 
                     <button class="analyse-btn" title="Guess Genre, Mood, Loudness"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path class="star-lg" d="M12 3l1.7 5.4L19 10l-5.3 1.6L12 17l-1.7-5.4L5 10l5.3-1.6L12 3z"/><path class="star-sm" d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15z"/></svg></button>
@@ -11723,6 +11673,13 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
             const analyseBtn = songItem.querySelector(".analyse-btn");
             const dropdown = songItem.querySelector(".dropdown-menu");
             const moreBtn = songItem.querySelector(".more-btn");
+            const favBtn = songItem.querySelector(".fav-btn");
+
+            if (song.favorite) {
+              favBtn.classList.add("active");
+            }
+            favBtn.title = song.favorite ? "Remove from favorites" : "Add to favorites";
+            favBtn.setAttribute("aria-pressed", String(!!song.favorite));
 
             moreBtn.addEventListener("click", (e) => {
               e.stopPropagation();
@@ -11864,66 +11821,43 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
               }
             });
 
-            // Heart on the row (outside the ⋮ menu). The favourite flag lives on the song itself,
-            // so every playlist containing it - and the Liked Songs list, rebuilt from it - stays in step.
-            //  - normal playlists, Recently On Loop, Forgotten Favourites: toggles in place.
-            //  - Liked Songs page: the heart un-likes, then the row folds away.
-            const heartBtn = songItem.querySelector(".song-heart-btn");
-            const onLikedPage = playlistName === "Liked Songs";
-            const paintHeart = (on) => {
-              const label = onLikedPage ? "Remove from Liked Songs" : (on ? "Remove from favorites" : "Add to favorites");
-              heartBtn.classList.toggle("active", on);
-              heartBtn.title = label;
-              heartBtn.setAttribute("aria-label", label);
-              heartBtn.setAttribute("aria-pressed", String(on));
-            };
-            paintHeart(!!song.favorite);
-
-            heartBtn.addEventListener("click", (e) => {
+            // Liked Songs page: heart on the row un-likes the song. The favourite flag lives on
+            // the song itself, so the source playlist's row updates too (and the Liked list is
+            // rebuilt from it) - there is no separate copy to keep in step.
+            const likedHeartBtn = songItem.querySelector(".liked-heart-btn");
+            likedHeartBtn.addEventListener("click", (e) => {
               e.stopPropagation();
-              if (heartBtn.disabled) return;
-              heartBtn.disabled = true;
+              if (likedHeartBtn.disabled) return;
+              likedHeartBtn.disabled = true;
               const titleEl = songItem.querySelector(".song-title");
               const songId = song.id;
-              const nowFav = onLikedPage ? false : !song.favorite;
 
-              // Re-read the stored record and change only the favourite fields, so nothing
-              // list-specific (entryId, order, _listPlaylist, ...) is ever written back.
               const tx = db.transaction("songs", "readwrite");
               const store = tx.objectStore("songs");
               const getReq = store.get(songId);
               getReq.onsuccess = () => {
                 const cur = getReq.result;
                 if (!cur) return;
-                cur.favorite = nowFav;
-                if (nowFav) cur.likedAt = Date.now(); else delete cur.likedAt;
+                cur.favorite = false;
+                delete cur.likedAt;
                 store.put(cur);
               };
               let failed = false;
               const undo = () => {
                 if (failed) return;
                 failed = true;
-                heartBtn.disabled = false;
+                likedHeartBtn.disabled = false;
                 showToast(song.name, "couldn't update favorite");
               };
               tx.onerror = undo;
               tx.onabort = undo;
               tx.oncomplete = () => {
-                heartBtn.disabled = false;
-                song.favorite = nowFav;
-                if (nowFav) song.likedAt = Date.now(); else delete song.likedAt;
-                songItem.classList.toggle("favorite-song", nowFav);
-                paintHeart(nowFav);
-                if (nowFav) heartBurst(titleEl); else heartBreak(titleEl);
-                showToast(song.name, nowFav ? "added to favorites" : "removed from favorites");
+                song.favorite = false;
+                songItem.classList.remove("favorite-song");
+                heartBreak(titleEl);
+                showToast(song.name, "removed from favorites");
                 if (window.LibrarySync) window.LibrarySync.scheduleSync();
-
-                if (!onLikedPage) {
-                  if (window.syncLikedSongs) window.syncLikedSongs();
-                  return;
-                }
-                // Liked Songs: let the crack animation play, then fold the row away
-                heartBtn.disabled = true;
+                // let the crack animation play, then fold the row away
                 setTimeout(() => {
                   songItem.style.height = songItem.offsetHeight + "px";
                   void songItem.offsetHeight;
@@ -11934,6 +11868,48 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
                     if (window.syncLikedSongs) window.syncLikedSongs({noReload: true});
                   }, 300);
                 }, 650);
+              };
+            });
+
+            favBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              dropdown.classList.remove("open");
+
+              const titleEl = songItem.querySelector(".song-title");
+              const nowFav = !song.favorite;
+
+              // Update this row in place. (The old code rebuilt the whole list 220ms later, which
+              // destroyed the row - and anything animating on it - mid-animation.)
+              const showFav = (on) => {
+                song.favorite = on;
+                songItem.classList.toggle("favorite-song", on);
+                favBtn.classList.toggle("active", on);
+                favBtn.title = on ? "Remove from favorites" : "Add to favorites";
+                favBtn.setAttribute("aria-pressed", String(on));
+              };
+              showFav(nowFav);
+              if (nowFav) heartBurst(titleEl);
+              else heartBreak(titleEl);
+
+              const transaction = db.transaction("songs", "readwrite");
+              const store = transaction.objectStore("songs");
+              if (nowFav) song.likedAt = Date.now();
+              const {entryId, order, _listPlaylist, ...meta} = song;
+              store.put(meta);
+
+              let failed = false;
+              const undo = () => {
+                if (failed) return;
+                failed = true;
+                showFav(!nowFav); // couldn't save - put the row back
+                showToast(song.name, "couldn't update favorite");
+              };
+              transaction.onerror = undo;
+              transaction.onabort = undo;
+              transaction.oncomplete = () => {
+                showToast(song.name, nowFav ? "added to favorites" : "removed from favorites");
+                if (window.syncLikedSongs) window.syncLikedSongs();
+                if (window.LibrarySync) window.LibrarySync.scheduleSync();
               };
             });
 
@@ -12461,8 +12437,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         // belongs to the playlist currently open on screen.
         function updateBackButton() {
           backBtn.disabled = !currentPlayingId;
-          const homeBack = document.getElementById("home-dock-back-btn");
-          if (homeBack) homeBack.disabled = backBtn.disabled; // keep the home dock's Back in step
         }
 
         // Remember a song that is being left behind. Keeps the newest HISTORY_LIMIT ids:
@@ -12558,9 +12532,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
             if (!blob) return;
             const url = URL.createObjectURL(blob);
             audioPlayer.src = url;
-            // Release the previous track's blob; only the playing song stays in memory.
-            if (window._currentAudioUrl) URL.revokeObjectURL(window._currentAudioUrl);
-            window._currentAudioUrl = url;
 
             currentSongName.textContent = song.name;
             window.dispatchEvent(new CustomEvent('player:songchange', {detail: {name: song.name, artist: song.artist, mood: song.mood || ""}}));
@@ -15028,7 +14999,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         // ---- Expose player internals for the home dock and view switching ----
         window.__sharedAudio = audioPlayer;
         window.__playerPlayNext = playNext;
-        window.__playerPlayPrev = playPrevious;
         // Origin playlist of whatever is playing right now (the playlist it was
         // started from), used by the dock's "go to player" button.
         window.__playerNowPlaying = () => currentPlayingSong
@@ -15440,167 +15410,6 @@ M 192.0,63.0 L 194.0,64.0 L 199.0,64.0 L 204.0,66.0 L 201.0,69.0 L 195.0,83.0 L 
         });
 
         if (settingsBtn) settingsBtn.addEventListener('click', function () { toggle.checked = C.enabled(); showStats(); });
-      })();
-    </script>
-    <script>
-      /* Settings -> Google account: sign in/out and a copy-link list of your playlists. All tokens stay
-         in the main process; this page only talks to /google/* on the local server. */
-      (function () {
-        var sec = document.getElementById('opt-google');
-        if (!sec) return;
-        var $ = function (id) { return document.getElementById(id); };
-        var head = sec.querySelector('.settings-opt-head');
-        var statusEl = $('google-status'), setupBox = $('google-setup');
-        var idIn = $('google-client-id'), secretIn = $('google-client-secret'), saveBtn = $('google-save-btn');
-        var signInBtn = $('google-signin-btn'), signOutBtn = $('google-signout-btn');
-        var listBtn = $('google-list-btn'), listBox = $('google-list'), listWrap = $('google-list-wrap');
-        var listClearTimer = null;
-        function setListOpen(open) {
-          listWrap.classList.toggle('open', open);
-          listWrap.setAttribute('aria-hidden', open ? 'false' : 'true');
-        }
-        var pollTimer = null, retryTimer = null;
-        var signInLabel = signInBtn.querySelector('.g-btn-label');
-        var SIGNIN_LABEL = signInLabel.textContent;
-
-        // After starting a sign-in, the button is locked for 5 s and then turns into "Try again",
-        // so you can reopen the sign-in page in a different browser/profile. A new attempt
-        // replaces the old one (the old browser tab's link stops working).
-        function armRetry() {
-          clearTimeout(retryTimer);
-          signInBtn.disabled = true;
-          signInLabel.textContent = 'Waiting for browser…';
-          retryTimer = setTimeout(function () {
-            retryTimer = null;
-            signInBtn.disabled = false;
-            signInLabel.textContent = 'Try again';
-          }, 5000);
-        }
-
-        head.addEventListener('click', function () {
-          var open = !sec.classList.contains('open');
-          sec.classList.toggle('open', open);
-          head.setAttribute('aria-expanded', open ? 'true' : 'false');
-        });
-
-        function toast(a, b) { if (typeof showToast === 'function') showToast(a, b); }
-
-        function call(url, method, body) {
-          return fetch(url, {
-            method: method || 'GET',
-            headers: body ? { 'Content-Type': 'application/json' } : undefined,
-            body: body ? JSON.stringify(body) : undefined
-          }).then(function (r) {
-            return r.json().catch(function () { return {}; }).then(function (data) { return { ok: r.ok, data: data }; });
-          });
-        }
-
-        function render(st) {
-          setupBox.hidden = !!st.configured;
-          signInBtn.hidden = !(st.configured && !st.signedIn);
-          if (!st.pending) {
-            clearTimeout(retryTimer); retryTimer = null;
-            signInBtn.disabled = false;
-            signInLabel.textContent = SIGNIN_LABEL;
-          } else if (!retryTimer) {
-            signInBtn.disabled = false;
-            signInLabel.textContent = 'Try again';
-          }
-          signOutBtn.hidden = !st.signedIn;
-          listBtn.hidden = !st.signedIn;
-          if (!st.signedIn) {
-            setListOpen(false); listBtn.textContent = 'Show my playlists';
-            clearTimeout(listClearTimer);
-            listClearTimer = setTimeout(function () { if (!listWrap.classList.contains('open')) listBox.textContent = ''; }, 350);
-          }
-          var t;
-          if (!st.configured) t = 'Not set up yet.';
-          else if (st.pending) t = 'Finish signing in in your browser… Wrong browser or profile? Press Try again.';
-          else if (st.signedIn) t = 'Signed in' + (st.account ? ' as ' + st.account : '') + '.' + (st.persisted ? '' : " (Won't be remembered after you close the app on this system.)");
-          else t = st.error || 'Not signed in.';
-          statusEl.textContent = t;
-        }
-
-        function refresh() {
-          return call('/google/status').then(function (r) { render(r.data); return r.data; })
-            .catch(function () { statusEl.textContent = 'Could not reach the app.'; return null; });
-        }
-
-        function poll() {
-          clearInterval(pollTimer);
-          var until = Date.now() + 5 * 60 * 1000;
-          pollTimer = setInterval(function () {
-            refresh().then(function (st) {
-              if (!st || !st.pending || Date.now() > until) { clearInterval(pollTimer); pollTimer = null; }
-            });
-          }, 1500);
-        }
-
-        saveBtn.addEventListener('click', function () {
-          call('/google/config', 'POST', { clientId: idIn.value, clientSecret: secretIn.value }).then(function (r) {
-            if (!r.ok) { statusEl.textContent = (r.data && r.data.error) || 'Could not save.'; return; }
-            idIn.value = ''; secretIn.value = '';
-            render(r.data);
-          });
-        });
-
-        signInBtn.addEventListener('click', function () {
-          call('/google/login', 'POST', {}).then(function (r) {
-            if (!r.ok) { statusEl.textContent = (r.data && r.data.error) || 'Could not start sign-in.'; return; }
-            armRetry(); refresh(); poll();
-          });
-        });
-
-        signOutBtn.addEventListener('click', function () {
-          call('/google/logout', 'POST', {}).then(function (r) { render(r.data); });
-        });
-
-        var SHOW_LABEL = listBtn.textContent, HIDE_LABEL = 'Hide my playlists';
-        function closeList() {
-          setListOpen(false);
-          listBtn.textContent = SHOW_LABEL;
-        }
-
-        listBtn.addEventListener('click', function () {
-          // Already showing: a second press closes it.
-          if (listWrap.classList.contains('open')) { closeList(); return; }
-          listBtn.disabled = true;
-          call('/google/playlists').then(function (r) {
-            listBtn.disabled = false;
-            if (!r.ok) { statusEl.textContent = (r.data && r.data.error) || 'Could not load playlists.'; refresh(); return; }
-            clearTimeout(listClearTimer);
-            listBox.textContent = '';
-            var items = r.data.playlists || [];
-            if (!items.length) listBox.textContent = 'No playlists found on this account.';
-            items.forEach(function (p) {
-              var row = document.createElement('div'); row.className = 'g-item';
-              var name = document.createElement('span'); name.className = 'g-name'; name.textContent = p.title; name.title = p.title;
-              var meta = document.createElement('span'); meta.className = 'g-meta';
-              meta.textContent = [p.privacy === 'private' ? 'Private' : (p.privacy === 'unlisted' ? 'Unlisted' : ''), p.count != null ? p.count + ' songs' : ''].filter(Boolean).join(' · ');
-              var b = document.createElement('button'); b.type = 'button'; b.className = 'cover-btn'; b.textContent = 'Copy link';
-              b.addEventListener('click', function () {
-                var link = 'https://www.youtube.com/playlist?list=' + encodeURIComponent(p.id);
-                (navigator.clipboard ? navigator.clipboard.writeText(link) : Promise.reject()).then(
-                  function () {
-                    b.textContent = 'Link copied';
-                    clearTimeout(b._resetTimer);
-                    b._resetTimer = setTimeout(function () { b.textContent = 'Copy link'; }, 2000);
-                  },
-                  function () { toast('Could not copy', link); }
-                );
-              });
-              row.appendChild(name); row.appendChild(meta); row.appendChild(b);
-              listBox.appendChild(row);
-            });
-            // Two frames so the browser has laid out the new rows before the height animates.
-            requestAnimationFrame(function () { requestAnimationFrame(function () { setListOpen(true); }); });
-            listBtn.textContent = HIDE_LABEL;
-          }).catch(function () { listBtn.disabled = false; statusEl.textContent = 'Could not load playlists.'; });
-        });
-
-        var gear = $('settings-btn');
-        if (gear) gear.addEventListener('click', refresh);
-        refresh();
       })();
     </script>
     <script src="/cassette.js" defer></script>

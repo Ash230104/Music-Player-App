@@ -63,7 +63,7 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
 };
 
-function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore = null, google = null, onDownload, onCancel = () => {}, onLibraryChanged = () => {}, log = () => {} }) {
+function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore = null, google = null, onDownload, onCancel = () => {}, log = () => {} }) {
   const clients = new Set(); // open SSE responses
   const pending = []; //        events published while no page was listening
 
@@ -414,7 +414,6 @@ function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore
           const body = await readJson(req, 5 * 1024 * 1024); // 5 MB
           try {
             const { changed } = libraryStore.saveSnapshot(body);
-            if (changed) onLibraryChanged();
             return sendJson(res, 200, { status: changed ? 'saved' : 'unchanged' });
           } catch (err) {
             log('library-sync error:', err.message);
@@ -429,7 +428,6 @@ function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore
           try {
             const buf = await readRaw(req); // raw binary, no base64 overhead
             libraryStore.saveAudio(songId, buf);
-            onLibraryChanged();
             return sendJson(res, 200, { status: 'saved' });
           } catch (err) {
             log('library-save-audio error:', err.message);
@@ -444,7 +442,6 @@ function createServer({ port, rendererDir, downloadsDir, importDir, libraryStore
           try {
             const buf = await readRaw(req, 10 * 1024 * 1024); // 10 MB ceiling for covers
             libraryStore.saveCover(songId, buf);
-            onLibraryChanged();
             return sendJson(res, 200, { status: 'saved' });
           } catch (err) {
             log('library-save-cover error:', err.message);

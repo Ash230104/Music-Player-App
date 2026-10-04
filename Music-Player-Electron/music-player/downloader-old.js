@@ -634,26 +634,16 @@ function createDownloader({ binaries, downloadsDir, publish, log = () => {}, pac
     let { info, error, stderr } = await getInfo(url);
     if (cancelled()) return;
 
-    // A private playlist can't be read by yt-dlp without a login, and yt-dlp's message for it
-    // varies (sometimes it is empty). So if the user signed in with Google and the link carries
-    // a playlist id, try the YouTube Data API for ANY failure except "no internet". The playlist
-    // loop below (public per-video downloads through yt-dlp) is unchanged. Public playlists that
-    // yt-dlp can read never touch the API.
-    if (!info) log('Reading the link failed:', String(stderr || error || '').trim().slice(-400) || '(no message)');
+    // A private playlist can't be read by yt-dlp without a login. If the user signed in with
+    // Google, list it through the YouTube Data API instead; the playlist loop below (public
+    // per-video downloads through yt-dlp) is unchanged. Public playlists never touch the API.
     if (!info && google && google.isSignedIn()) {
       const listId = extractPlaylistId(url);
-      const offline = /getaddrinfo|Temporary failure|Network is unreachable|timed out|Connection (refused|reset|aborted)|Failed to resolve/i.test(String(stderr || ''));
-      if (listId && !offline) {
-        publishProgress({ state: 'resolving', url, jobTitle: 'Reading your YouTube playlist…' });
+      if (listId && looksLikePrivatePlaylist(stderr || error)) {
         try {
           info = await google.getPlaylist(listId);
         } catch (err) {
-          log('Google playlist lookup failed:', err.message);
-          const known = ['api', 'not_signed_in', 'not_configured'].includes(err.code);
-          publish({
-            title: 'Could not read playlist',
-            message: known ? err.message : "Couldn't reach Google. Check your connection and try again.",
-          });
+          publish({ title: 'Could not read playlist', message: err.message });
           return;
         }
         if (cancelled()) return;

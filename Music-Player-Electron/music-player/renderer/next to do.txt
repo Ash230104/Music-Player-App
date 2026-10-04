@@ -1,7 +1,9 @@
-maybe, try to get rid of nodejs(castiel id)
+edits in phone don't go to pc
 
-google login if possible
+make apk
+
+check if tag changes get synced
+
+how to run the mobile zip
 
 -------------------------------------
-
-change app name

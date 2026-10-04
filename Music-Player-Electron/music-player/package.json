@@ -1,7 +1,7 @@
 {
   "name": "music-player",
-  "productName": "Music Player",
-  "version": "2.0.0",
+  "productName": "Solance",
+  "version": "2.1.0",
   "description": "Personal music player with YouTube, Spotify and Local import, and much more.",
   "main": "main.js",
   "private": true,
@@ -33,7 +33,7 @@
   },
   "build": {
     "appId": "com.musicplayer.desktop",
-    "productName": "Music Player",
+    "productName": "Solance",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -51,7 +51,11 @@
       "build/icon.png",
       "renderer/**/*",
       "spotify_scrape.py",
-      "preload-mini.js"
+      "preload-mini.js",
+      "google-auth.js",
+      "cloud-sync.js",
+      "sigv4.js",
+      "google-client.bundled.json"
     ],
     "extraResources": [
       {
